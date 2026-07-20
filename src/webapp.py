@@ -159,6 +159,8 @@ class TrainingTask:
         self._log_buffer = io.StringIO()
         self._cancel_requested = False
         self._subprocess: subprocess.Popen | None = None
+        self.eta_seconds: float = 0.0
+        self._epoch_times: list[float] = []
         self.created_at = datetime.now()
 
     def cancel(self):
@@ -526,6 +528,9 @@ class TrainingTask:
                     self._flush_logs()
                     return
 
+                import time as _time
+                _epoch_start = _time.time()
+
                 # --- Train ---
                 student.train()
                 epoch_loss = 0.0
@@ -595,6 +600,13 @@ class TrainingTask:
                     f"Epoch {epoch+1}/{self.config['epochs']} — "
                     f"Loss: {avg_loss:.4f} — Val Acc: {acc:.2%}"
                 )
+
+                # --- ETA ---
+                _elapsed = _time.time() - _epoch_start
+                self._epoch_times.append(_elapsed)
+                avg_epoch = sum(self._epoch_times) / len(self._epoch_times)
+                remaining = self.config["epochs"] - (epoch + 1)
+                self.eta_seconds = avg_epoch * remaining
 
                 # --- Checkpoint ---
                 if ckpt_every > 0 and (epoch + 1) % ckpt_every == 0:
@@ -764,6 +776,7 @@ async def stream_progress(task_id: str):
                 "total_epochs": task.total_epochs,
                 "current_loss": task.current_loss,
                 "current_acc": task.current_acc,
+                "eta_seconds": round(task.eta_seconds, 1),
                 "losses": task.losses,
                 "accuracies": task.accuracies,
                 "logs": new_logs,

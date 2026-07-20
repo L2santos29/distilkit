@@ -500,6 +500,12 @@
         if (data.current_acc != null) {
           html += `<div class="flex justify-between"><span class="text-slate-400">Accuracy</span><span class="font-mono text-emerald-400">${(data.current_acc * 100).toFixed(2)}%</span></div>`;
         }
+        if (data.eta_seconds != null && data.eta_seconds > 0) {
+          const eta = data.eta_seconds > 60
+            ? Math.round(data.eta_seconds / 60) + 'm ' + Math.round(data.eta_seconds % 60) + 's'
+            : Math.round(data.eta_seconds) + 's';
+          html += `<div class="flex justify-between"><span class="text-slate-400">ETA</span><span class="font-mono text-yellow-400">${eta}</span></div>`;
+        }
         $('status-card').innerHTML = html;
       }
 

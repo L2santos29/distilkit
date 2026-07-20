@@ -4,32 +4,36 @@ Demonstrates end-to-end workflow:
   teacher → distiller.train() → student → benchmark → export
 """
 
-import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
-from src.teacher import load_teacher
-from src.student import build_student
-from src.distiller import Distiller
 from src.benchmarks import compare_teacher_student
+from src.distiller import Distiller
 from src.onnx_export import export_to_onnx
+from src.student import build_student
+from src.teacher import load_teacher
 
 
 def get_cifar10(batch_size: int = 64) -> tuple[DataLoader, DataLoader]:
     """Load CIFAR-10 train/val dataloaders."""
-    transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)),
-    ])
-    transform_val = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)),
-    ])
+    transform_train = transforms.Compose(
+        [
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)),
+        ]
+    )
+    transform_val = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)),
+        ]
+    )
 
-    train_set = datasets.CIFAR10(root="./data", train=True, download=True, transform=transform_train)
+    train_set = datasets.CIFAR10(
+        root="./data", train=True, download=True, transform=transform_train
+    )
     val_set = datasets.CIFAR10(root="./data", train=False, download=True, transform=transform_val)
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=2)
@@ -68,7 +72,7 @@ def main():
     # 4. Distill
     print(f"\n🔄 Distilling ({EPOCHS} epochs, T={TEMPERATURE}, α={ALPHA})...")
     distiller = Distiller(teacher, student, temperature=TEMPERATURE, alpha=ALPHA)
-    history = distiller.train(train_loader, val_loader, epochs=EPOCHS)
+    _ = distiller.train(train_loader, val_loader, epochs=EPOCHS)
 
     # 5. Compare
     print("\n📊 Benchmarking teacher vs. student...")

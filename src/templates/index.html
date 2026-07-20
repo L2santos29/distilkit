@@ -1,9 +1,22 @@
 <!DOCTYPE html>
-<html lang="es" class="dark">
+<html lang="es">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DistilKit — Knowledge Distillation</title>
+  <link rel="icon" id="favicon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+  <script>
+    // ─── Theme: restore from localStorage or system preference ───
+    (function() {
+      const stored = localStorage.getItem('theme');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (stored === 'dark' || (!stored && prefersDark)) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    })();
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
   <script>
@@ -22,70 +35,341 @@
   </script>
   <style>
     body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
-    .skeleton { background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%); background-size: 200% 100%; animation: pulse 1.5s ease-in-out infinite; }
+    body.light-bg { background-color: #f8fafc; }
+    .skeleton-dark { background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%); background-size: 200% 100%; animation: pulse 1.5s ease-in-out infinite; }
+    .skeleton-light { background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%); background-size: 200% 100%; animation: pulse 1.5s ease-in-out infinite; }
     @keyframes pulse { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
     #logs-box::-webkit-scrollbar { width: 6px; }
     #logs-box::-webkit-scrollbar-track { background: #1e293b; border-radius: 3px; }
     #logs-box::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
     .fade-in { animation: fadeIn 0.5s ease-in-out; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    /* Theme toggle icon animation */
+    .theme-icon { transition: transform 0.3s ease; }
+    .dark .theme-icon { transform: rotate(360deg); }
+    /* ─── Confirm modal ─── */
+    #confirm-overlay {
+      position: fixed; inset: 0; z-index: 9998;
+      background: rgba(0,0,0,0.5);
+      display: flex; align-items: center; justify-content: center;
+      animation: overlayIn 0.2s ease;
+    }
+    #confirm-overlay.hidden { display: none; }
+    @keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
+    #confirm-dialog {
+      background: white; color: #1e293b;
+      border-radius: 1rem;
+      padding: 1.5rem;
+      max-width: 24rem;
+      width: 90%;
+      box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+      animation: dialogIn 0.25s cubic-bezier(0.21, 1.02, 0.73, 1);
+    }
+    .dark #confirm-dialog {
+      background: #1e293b; color: #f1f5f9;
+    }
+    @keyframes dialogIn {
+      0% { transform: scale(0.9) translateY(20px); opacity: 0; }
+      100% { transform: scale(1) translateY(0); opacity: 1; }
+    }
+    #confirm-dialog h3 { font-size: 1.125rem; font-weight: 600; margin-bottom: 0.5rem; }
+    #confirm-dialog p { font-size: 0.875rem; color: #64748b; margin-bottom: 1.25rem; line-height: 1.5; }
+    .dark #confirm-dialog p { color: #94a3b8; }
+    #confirm-dialog .actions { display: flex; gap: 0.75rem; justify-content: flex-end; }
+    #confirm-dialog button {
+      padding: 0.5rem 1.25rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 500;
+      border: none; cursor: pointer; transition: all 0.15s;
+    }
+    #confirm-dialog .btn-secondary {
+      background: #e2e8f0; color: #475569;
+    }
+    .dark #confirm-dialog .btn-secondary {
+      background: #334155; color: #cbd5e1;
+    }
+    #confirm-dialog .btn-secondary:hover { background: #cbd5e1; }
+    .dark #confirm-dialog .btn-secondary:hover { background: #475569; }
+    #confirm-dialog .btn-danger {
+      background: #ef4444; color: white;
+    }
+    #confirm-dialog .btn-danger:hover { background: #dc2626; }
+    /* ─── Toast notifications ─── */
+    #toast-container {
+      position: fixed; top: 1rem; right: 1rem; z-index: 9999;
+      display: flex; flex-direction: column; gap: 0.5rem;
+      pointer-events: none;
+    }
+    .toast {
+      pointer-events: auto;
+      padding: 0.75rem 1rem;
+      border-radius: 0.75rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      box-shadow: 0 10px 25px -5px rgba(0,0,0,0.15), 0 4px 10px -5px rgba(0,0,0,0.1);
+      display: flex; align-items: center; gap: 0.625rem;
+      max-width: 24rem;
+      animation: toastIn 0.35s cubic-bezier(0.21, 1.02, 0.73, 1) forwards;
+      border: 1px solid;
+      cursor: default;
+    }
+    .toast.toast-out {
+      animation: toastOut 0.3s ease-in forwards;
+    }
+    .toast-success {
+      background: #f0fdf4; color: #166534; border-color: #bbf7d0;
+    }
+    .dark .toast-success {
+      background: #052e16; color: #86efac; border-color: #166534;
+    }
+    .toast-error {
+      background: #fef2f2; color: #991b1b; border-color: #fecaca;
+    }
+    .dark .toast-error {
+      background: #450a0a; color: #fca5a5; border-color: #991b1b;
+    }
+    .toast-info {
+      background: #eff6ff; color: #1e40af; border-color: #bfdbfe;
+    }
+    .dark .toast-info {
+      background: #0c1929; color: #93c5fd; border-color: #1e3a5f;
+    }
+    .toast-warning {
+      background: #fffbeb; color: #92400e; border-color: #fde68a;
+    }
+    .dark .toast-warning {
+      background: #2a1f0a; color: #fcd34d; border-color: #78350f;
+    }
+    @keyframes toastIn {
+      0% { opacity: 0; transform: translateX(100%) scale(0.9); }
+      100% { opacity: 1; transform: translateX(0) scale(1); }
+    }
+    @keyframes toastOut {
+      0% { opacity: 1; transform: translateX(0) scale(1); }
+      100% { opacity: 0; transform: translateX(100%) scale(0.9); }
+    }
+    /* ─── Help tooltips ─── */
+    .help-tip {
+      position: relative;
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 1.125rem; height: 1.125rem;
+      margin-left: 0.25rem;
+      border-radius: 9999px;
+      font-size: 0.625rem; font-weight: 700; line-height: 1;
+      cursor: help;
+      user-select: none;
+      background: #cbd5e1; color: #475569;
+      vertical-align: middle;
+      transition: background 0.15s;
+    }
+    .dark .help-tip {
+      background: #334155; color: #94a3b8;
+    }
+    .help-tip:hover {
+      background: #94a3b8; color: #1e293b;
+    }
+    .dark .help-tip:hover {
+      background: #475569; color: #e2e8f0;
+    }
+    .help-tip .tooltip-text {
+      visibility: hidden; opacity: 0;
+      position: absolute;
+      z-index: 100;
+      top: calc(100% + 0.5rem);
+      left: 50%;
+      transform: translateX(-50%);
+      width: 16rem;
+      padding: 0.625rem 0.75rem;
+      border-radius: 0.5rem;
+      font-size: 0.75rem; font-weight: 400; line-height: 1.4;
+      white-space: normal;
+      text-align: left;
+      background: #1e293b; color: #e2e8f0;
+      box-shadow: 0 10px 25px -5px rgba(0,0,0,0.2);
+      transition: opacity 0.15s, visibility 0.15s;
+      pointer-events: none;
+    }
+    .dark .help-tip .tooltip-text {
+      background: #f8fafc; color: #1e293b;
+      box-shadow: 0 10px 25px -5px rgba(0,0,0,0.15);
+    }
+    /* Arrow */
+    .help-tip .tooltip-text::before {
+      content: '';
+      position: absolute;
+      top: -0.375rem;
+      left: 50%;
+      transform: translateX(-50%);
+      border-left: 0.375rem solid transparent;
+      border-right: 0.375rem solid transparent;
+      border-bottom: 0.375rem solid #1e293b;
+    }
+    .dark .help-tip .tooltip-text::before {
+      border-bottom-color: #f8fafc;
+    }
+    .help-tip:hover .tooltip-text {
+      visibility: visible;
+      opacity: 1;
+    }
+    /* ─── Disabled controls ─── */
+    #config-panel.controls-disabled select,
+    #config-panel.controls-disabled input[type="range"] {
+      opacity: 0.5;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    select:disabled,
+    input[type="range"]:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    select:disabled {
+      background-image: none;
+    }
+    #lock-badge {
+      display: none;
+      font-size: 0.625rem;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      background: #fef3c7; color: #92400e;
+      font-weight: 500;
+      margin-left: 0.5rem;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .dark #lock-badge {
+      background: #422006; color: #fcd34d;
+    }
+    #lock-badge.visible { display: inline; }
+    /* ─── Config collapse ─── */
+    #config-body {
+      overflow: hidden;
+      transition: max-height 0.3s ease, opacity 0.25s ease, margin 0.3s ease;
+      max-height: 2000px;
+      opacity: 1;
+    }
+    #config-body.collapsed {
+      max-height: 0;
+      opacity: 0;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    #config-chevron.rotated {
+      transform: rotate(-90deg);
+    }
+    /* ─── Skeleton loading ─── */
+    .skeleton-line {
+      border-radius: 0.375rem;
+      background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+      background-size: 200% 100%;
+      animation: skeletonPulse 1.5s ease-in-out infinite;
+    }
+    .dark .skeleton-line {
+      background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
+    }
+    @keyframes skeletonPulse {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen">
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 min-h-screen transition-colors duration-200">
+
+  <!-- ═══ TOAST CONTAINER ═══ -->
+  <div id="toast-container"></div>
+
+  <!-- ═══ CONFIRM MODAL ═══ -->
+  <div id="confirm-overlay" class="hidden">
+    <div id="confirm-dialog">
+      <h3>⛔ Cancel Training?</h3>
+      <p>The current epoch will be interrupted and any unsaved progress will be lost.<br>You can resume later from the last checkpoint.</p>
+      <div class="actions">
+        <button class="btn-secondary" id="confirm-no">Keep Training</button>
+        <button class="btn-danger" id="confirm-yes">⛔ Yes, Cancel</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ═══ HEADER ═══ -->
-  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50">
-    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
-      <span class="text-2xl">⚡</span>
-      <h1 class="text-xl font-bold bg-gradient-to-r from-brand-400 to-purple-400 bg-clip-text text-transparent">
+  <header class="border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-3 sm:px-4 py-2 sm:py-3 flex items-center gap-2 sm:gap-3">
+      <span class="text-xl sm:text-2xl">⚡</span>
+      <h1 class="text-lg sm:text-xl font-bold bg-gradient-to-r from-brand-400 to-purple-400 bg-clip-text text-transparent">
         DistilKit
       </h1>
-      <span class="text-xs text-slate-500 ml-2">Knowledge Distillation</span>
-      <span id="device-badge" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400"></span>
+      <span class="text-xs text-slate-400 dark:text-slate-500 ml-1 hidden sm:inline">Knowledge Distillation</span>
+      <div class="ml-auto flex items-center gap-1.5 sm:gap-2">
+        <span id="device-badge" class="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400"></span>
+        <!-- Theme toggle -->
+        <button id="theme-toggle" class="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                title="Toggle theme" aria-label="Toggle theme">
+        <svg class="theme-icon w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <!-- Sun icon (shown in dark mode) -->
+          <path class="dark:hidden" stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+          <!-- Moon icon (shown in light mode) -->
+          <path class="hidden dark:block" stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+        </svg>
+      </button>
     </div>
   </header>
 
-  <main class="max-w-7xl mx-auto px-4 py-6">
-    <div class="grid lg:grid-cols-5 gap-6">
+  <main class="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
+    <div class="grid lg:grid-cols-5 gap-4 sm:gap-6">
 
       <!-- ═══ LEFT PANEL — CONFIG ═══ -->
       <section class="lg:col-span-2 space-y-4">
-        <div class="bg-slate-900 rounded-xl border border-slate-800 p-5 space-y-4">
-          <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide">⚙️ Configuration</h2>
+        <div id="config-panel" class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5 space-y-4">
+          <h2 class="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide flex items-center gap-2">
+            <button id="config-toggle" class="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                    title="Toggle config panel" aria-label="Toggle config panel">
+              <svg id="config-chevron" class="w-4 h-4 transition-transform duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            <span>⚙️ Configuration</span><span id="lock-badge">🔒 Locked</span>
+          </h2>
+          <div id="config-body" class="space-y-4">
 
           <!-- Dataset -->
           <div>
-            <label class="block text-sm font-medium text-slate-300 mb-1.5">📦 Dataset</label>
+            <label class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">📦 Dataset
+              <span class="help-tip" data-tip="">?<span class="tooltip-text">Which image dataset to use. CIFAR-10 (32×32 color, 10 classes) is the default. MNIST and FashionMNIST are 28×28 grayscale. SVHN is 32×32 color (street digits).</span></span>
+            </label>
             <select id="dataset"
-              class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+              class="w-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
             </select>
           </div>
 
           <!-- Teacher -->
           <div>
-            <label class="block text-sm font-medium text-slate-300 mb-1.5">🧠 Teacher Model</label>
+            <label class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">🧠 Teacher Model
+              <span class="help-tip">?<span class="tooltip-text">The large pre-trained model that provides knowledge. ResNet18 is fastest, ResNet50/101 are more accurate. MobileNet and EfficientNet are efficient by design.</span></span>
+            </label>
             <select id="teacher"
-              class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+              class="w-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
             </select>
           </div>
 
           <!-- Student -->
           <div>
-            <label class="block text-sm font-medium text-slate-300 mb-1.5">⚡ Student Model</label>
+            <label class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">⚡ Student Model
+              <span class="help-tip">?<span class="tooltip-text">The compact model being trained. MiniCNN is a lightweight CNN, MiniResNet uses residual connections. The width (channel count) is auto-scaled to match the compression ratio.</span></span>
+            </label>
             <select id="student"
-              class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+              class="w-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
             </select>
           </div>
 
           <!-- Compression Ratio -->
           <div>
             <div class="flex justify-between text-sm mb-1.5">
-              <label for="compression" class="text-slate-300">📏 Compression</label>
-              <span id="compression-value" class="text-brand-400 font-mono">5%</span>
+              <label for="compression" class="text-slate-600 dark:text-slate-300">📏 Compression
+                <span class="help-tip">?<span class="tooltip-text">Target ratio of student/teacher parameters. 5% means the student will have ~5% of the teacher's parameters. Lower = smaller but may lose accuracy.</span></span>
+              </label>
+              <span id="compression-value" class="text-brand-500 dark:text-brand-400 font-mono">5%</span>
             </div>
             <input id="compression" type="range" min="1" max="50" value="5" step="1"
                    class="w-full accent-brand-500" />
-            <div class="flex justify-between text-xs text-slate-600 mt-0.5">
+            <div class="flex justify-between text-xs text-slate-400 dark:text-slate-500 mt-0.5">
               <span>1% (tiny)</span>
               <span>25% (medium)</span>
               <span>50% (large)</span>
@@ -95,8 +379,10 @@
           <!-- Epochs -->
           <div>
             <div class="flex justify-between text-sm mb-1.5">
-              <label for="epochs" class="text-slate-300">📅 Epochs</label>
-              <span id="epochs-value" class="text-brand-400 font-mono">10</span>
+              <label for="epochs" class="text-slate-600 dark:text-slate-300">📅 Epochs
+                <span class="help-tip">?<span class="tooltip-text">Number of complete passes through the training dataset. More epochs = longer training, potentially better accuracy. 10 is a good starting point.</span></span>
+              </label>
+              <span id="epochs-value" class="text-brand-500 dark:text-brand-400 font-mono">10</span>
             </div>
             <input id="epochs" type="range" min="1" max="50" value="10" step="1"
                    class="w-full accent-brand-500" />
@@ -105,8 +391,10 @@
           <!-- Temperature -->
           <div>
             <div class="flex justify-between text-sm mb-1.5">
-              <label for="temperature" class="text-slate-300">🌡️ Temperature</label>
-              <span id="temperature-value" class="text-brand-400 font-mono">4.0</span>
+              <label for="temperature" class="text-slate-600 dark:text-slate-300">🌡️ Temperature
+                <span class="help-tip">?<span class="tooltip-text">Softens the teacher's output probabilities. Higher values (8-20) produce softer distributions that reveal more inter-class relationships. Default: 4.0.</span></span>
+              </label>
+              <span id="temperature-value" class="text-brand-500 dark:text-brand-400 font-mono">4.0</span>
             </div>
             <input id="temperature" type="range" min="1" max="20" value="4" step="0.5"
                    class="w-full accent-brand-500" />
@@ -115,8 +403,10 @@
           <!-- Alpha -->
           <div>
             <div class="flex justify-between text-sm mb-1.5">
-              <label for="alpha" class="text-slate-300">⚖️ Alpha (α)</label>
-              <span id="alpha-value" class="text-brand-400 font-mono">0.70</span>
+              <label for="alpha" class="text-slate-600 dark:text-slate-300">⚖️ Alpha (α)
+                <span class="help-tip">?<span class="tooltip-text">Weight between teacher distillation loss and hard-label loss. α=1.0 = pure distillation (ignore labels). α=0.0 = standard supervised learning. Default: 0.7.</span></span>
+              </label>
+              <span id="alpha-value" class="text-brand-500 dark:text-brand-400 font-mono">0.70</span>
             </div>
             <input id="alpha" type="range" min="0" max="100" value="70" step="5"
                    class="w-full accent-brand-500" />
@@ -125,8 +415,10 @@
           <!-- Patience (Early Stopping) -->
           <div>
             <div class="flex justify-between text-sm mb-1.5">
-              <label for="patience" class="text-slate-300">⏹️ Patience</label>
-              <span id="patience-value" class="text-brand-400 font-mono">0 (off)</span>
+              <label for="patience" class="text-slate-600 dark:text-slate-300">⏹️ Patience
+                <span class="help-tip">?<span class="tooltip-text">Early stopping: stop training if validation accuracy doesn't improve for N epochs. 0 = disabled. Helps avoid overfitting and saves time.</span></span>
+              </label>
+              <span id="patience-value" class="text-brand-500 dark:text-brand-400 font-mono">0 (off)</span>
             </div>
             <input id="patience" type="range" min="0" max="20" value="0" step="1"
                    class="w-full accent-brand-500" />
@@ -135,12 +427,52 @@
           <!-- Batch Size -->
           <div>
             <div class="flex justify-between text-sm mb-1.5">
-              <label for="batch-size" class="text-slate-300">📦 Batch Size</label>
-              <span id="batch-size-value" class="text-brand-400 font-mono">64</span>
+              <label for="batch-size" class="text-slate-600 dark:text-slate-300">📦 Batch Size
+                <span class="help-tip">?<span class="tooltip-text">Number of samples processed per step. Larger batches = faster training but more memory. 64 is a good balance for CPU training.</span></span>
+              </label>
+              <span id="batch-size-value" class="text-brand-500 dark:text-brand-400 font-mono">64</span>
             </div>
             <input id="batch-size" type="range" min="8" max="512" value="64" step="8"
                    class="w-full accent-brand-500" />
           </div>
+
+          <!-- ─── Presets ─── -->
+          <div>
+            <div class="flex justify-between text-xs mb-1.5">
+              <span class="text-slate-500 dark:text-slate-400 font-medium uppercase tracking-wide">🎯 Presets</span>
+            </div>
+            <div class="grid grid-cols-3 gap-1.5">
+              <button data-preset="quick"
+                      class="preset-btn py-1.5 rounded-lg text-xs font-medium transition-all duration-150
+                             bg-amber-50 dark:bg-amber-900/20 hover:bg-amber-100 dark:hover:bg-amber-900/40
+                             text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/50">
+                🚀<br>Quick
+              </button>
+              <button data-preset="balanced"
+                      class="preset-btn py-1.5 rounded-lg text-xs font-medium transition-all duration-150
+                             bg-brand-50 dark:bg-brand-900/20 hover:bg-brand-100 dark:hover:bg-brand-900/40
+                             text-brand-700 dark:text-brand-400 border border-brand-200 dark:border-brand-800/50">
+                🎯<br>Balanced
+              </button>
+              <button data-preset="ultrafast"
+                      class="preset-btn py-1.5 rounded-lg text-xs font-medium transition-all duration-150
+                             bg-emerald-50 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/40
+                             text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50">
+                ⚡<br>Ultra-fast
+              </button>
+            </div>
+          </div>
+
+          <!-- Train Button -->
+          <button id="share-config-btn"
+                  class="w-full py-2 rounded-lg text-xs font-medium transition-all duration-150
+                         bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700
+                         text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200
+                         border border-slate-200 dark:border-slate-700
+                         flex items-center justify-center gap-1.5 mb-2">
+            <span>🔗</span>
+            <span>Copy Config Link</span>
+          </button>
 
           <!-- Train Button -->
           <button id="train-btn"
@@ -155,34 +487,34 @@
           <!-- Cancel button (hidden until training starts) -->
           <button id="cancel-btn"
                   class="w-full py-3 rounded-xl font-semibold text-sm transition-all duration-200 border
-                         bg-red-900/30 hover:bg-red-800/50 text-red-400 border-red-800
+                         bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-800/50 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800
                          hidden items-center justify-center gap-2">
             <span>⛔</span>
             <span>Cancel Training</span>
           </button>
 
           <!-- Export buttons (hidden until training completes) -->
-          <div id="export-section" class="hidden pt-2 border-t border-slate-800 space-y-2 fade-in">
-            <p class="text-xs text-slate-500 text-center">Export trained student:</p>
+          <div id="export-section" class="hidden pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2 fade-in">
+            <p class="text-xs text-slate-400 dark:text-slate-500 text-center">Export trained student:</p>
+            <div id="export-size-preview" class="text-center text-xs text-slate-400 dark:text-slate-500"></div>
             <div class="grid grid-cols-2 gap-2">
               <button id="export-onnx-btn"
-                      class="py-2 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors">
+                      class="py-2 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 transition-colors">
                 📦 ONNX
               </button>
               <button id="export-ts-btn"
-                      class="py-2 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors">
+                      class="py-2 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 transition-colors">
                 📦 TorchScript
               </button>
             </div>
-            <p id="export-status" class="text-xs text-slate-500 text-center"></p>
+            <p id="export-status" class="text-xs text-slate-400 dark:text-slate-500 text-center"></p>
           </div>
         </div>
-
-        <!-- Status Card -->
-        <div class="bg-slate-900 rounded-xl border border-slate-800 p-5 space-y-2">
-          <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide">📊 Status</h2>
+        </div>
+        <div class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5 space-y-2">
+          <h2 class="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">📊 Status</h2>
           <div class="space-y-1 text-sm" id="status-card">
-            <p class="text-slate-500 italic">Waiting to start...</p>
+            <p class="text-slate-400 dark:text-slate-500 italic">Waiting to start...</p>
           </div>
         </div>
       </section>
@@ -192,20 +524,20 @@
 
         <!-- Progress bar -->
         <div id="progress-container" class="hidden">
-          <div class="flex justify-between text-xs text-slate-400 mb-1">
+          <div class="flex justify-between text-xs text-slate-500 dark:text-slate-400 mb-1">
             <span id="progress-label">Progress</span>
             <span id="progress-pct" class="font-mono">0%</span>
           </div>
-          <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+          <div class="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
             <div id="progress-bar" class="h-full bg-gradient-to-r from-brand-500 to-purple-500 rounded-full transition-all duration-300" style="width:0%"></div>
           </div>
         </div>
 
         <!-- Chart -->
-        <div class="bg-slate-900 rounded-xl border border-slate-800 p-5">
-          <div class="flex justify-between items-center mb-3">
-            <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide">📈 Training Progress</h2>
-            <div class="flex gap-4 text-xs">
+        <div class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5">
+          <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3">
+            <h2 class="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">📈 Training Progress</h2>
+            <div class="flex gap-4 text-xs text-slate-600 dark:text-slate-400">
               <span class="flex items-center gap-1.5">
                 <span class="w-3 h-0.5 rounded bg-brand-400"></span> Loss
               </span>
@@ -214,9 +546,9 @@
               </span>
             </div>
           </div>
-          <div id="chart-wrapper" style="position:relative; height:260px;">
+          <div id="chart-wrapper" class="relative" style="height:180px;">
             <canvas id="training-chart"></canvas>
-            <div id="chart-empty" class="absolute inset-0 flex flex-col items-center justify-center text-slate-600">
+            <div id="chart-empty" class="absolute inset-0 flex flex-col items-center justify-center text-slate-400 dark:text-slate-600">
               <p class="text-4xl mb-2">📊</p>
               <p class="text-sm">Run a training to see the chart</p>
             </div>
@@ -224,31 +556,36 @@
         </div>
 
         <!-- Results summary -->
-        <div id="results-section" class="hidden bg-slate-900 rounded-xl border border-slate-800 p-5 fade-in">
-          <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-3">✅ Results</h2>
+        <div id="results-section" class="hidden bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5 fade-in">
+          <h2 class="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">✅ Results</h2>
           <div id="results-content"></div>
         </div>
 
         <!-- Logs -->
-        <div class="bg-slate-900 rounded-xl border border-slate-800 p-5">
-          <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-2">📋 Logs</h2>
+        <div class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5">
+          <h2 class="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">📋 Logs</h2>
           <pre id="logs-box"
-               class="bg-slate-950 rounded-lg p-3 text-xs font-mono text-slate-400 h-40 overflow-y-auto leading-relaxed select-text">Waiting to start...</pre>
+               class="bg-slate-100 dark:bg-slate-950 rounded-lg p-3 text-xs font-mono text-slate-600 dark:text-slate-400 h-40 overflow-y-auto leading-relaxed select-text">Waiting to start...</pre>
         </div>
 
         <!-- History -->
-        <div class="bg-slate-900 rounded-xl border border-slate-800 p-5">
-          <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-3">📜 Run History</h2>
+        <div class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5">
+          <h2 class="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">📜 Run History</h2>
           <div id="history-content">
-            <p class="text-sm text-slate-500 italic">Loading...</p>
-          </div>
+            <!-- Loading skeleton -->
+            <div id="history-skeleton" class="space-y-2">
+              <div class="skeleton-line" style="width: 100%; height: 0.75rem;"></div>
+              <div class="skeleton-line" style="width: 85%; height: 0.75rem;"></div>
+              <div class="skeleton-line" style="width: 60%; height: 0.75rem;"></div>
+              <div class="skeleton-line" style="width: 90%; height: 0.75rem;"></div>
+            </div>
         </div>
       </section>
 
     </div>
   </main>
 
-  <footer class="text-center text-xs text-slate-700 py-6">
+  <footer class="text-center text-xs text-slate-400 dark:text-slate-600 py-6">
     DistilKit · MIT License
   </footer>
 
@@ -300,15 +637,49 @@
           if (d === 'CIFAR-10') opt.selected = true;
           dsSel.appendChild(opt);
         });
-        // Teacher dropdown
+        // Teacher dropdown with optgroups by cache status
         const teacherSel = document.getElementById('teacher');
+        const cached = config.cached_teachers || {};
+
+        // Separate into cached and uncached
+        const cachedModels = [];
+        const uncachedModels = [];
         config.teachers.forEach(t => {
-          const opt = document.createElement('option');
-          opt.value = t;
-          opt.textContent = t;
-          if (t === 'resnet18') opt.selected = true;
-          teacherSel.appendChild(opt);
+          if (cached[t]) cachedModels.push(t);
+          else uncachedModels.push(t);
         });
+
+        function addOptgroup(label, models, selectedValue) {
+          if (models.length === 0) return;
+          const group = document.createElement('optgroup');
+          group.label = label;
+          models.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t;
+            opt.textContent = t;
+            if (t === selectedValue) opt.selected = true;
+            group.appendChild(opt);
+          });
+          teacherSel.appendChild(group);
+        }
+
+        addOptgroup('📦  Cached', cachedModels, 'resnet18');
+        addOptgroup('⬇️  Needs download', uncachedModels, null);
+
+        // Default to first cached model if resnet18 is not cached
+        if (!cached['resnet18'] && cachedModels.length > 0) {
+          teacherSel.value = cachedModels[0];
+        }
+
+        // Warn when selecting an uncached model
+        teacherSel.addEventListener('change', () => {
+          const selected = teacherSel.value;
+          if (!cached[selected]) {
+            showToast('⬇️ ' + selected + ' needs download — will happen when training starts', 'warning');
+          }
+        });
+        // Device badge
+        const badge = document.getElementById('device-badge');
         // Student dropdown
         const studentSel = document.getElementById('student');
         config.students.forEach(s => {
@@ -330,12 +701,6 @@
       if (chart) { chart.destroy(); }
       document.getElementById('chart-empty').classList.add('hidden');
 
-      // Prevent canvas from stretching by fixing its size to the parent
-      const rect = wrapper.getBoundingClientRect();
-      const canvas = document.getElementById('training-chart');
-      canvas.style.width = rect.width + 'px';
-      canvas.style.height = rect.height + 'px';
-
       chart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -348,10 +713,9 @@
           ]
         },
         options: {
-          responsive: false,
+          responsive: true,
           maintainAspectRatio: false,
           animation: false,
-          resize: false,
           interaction: { mode: 'index', intersect: false },
           plugins: { legend: { display: false } },
           scales: {
@@ -378,17 +742,243 @@
       return n.toLocaleString();
     }
 
+    // ─── Toast notifications ───
+    function showToast(message, type = 'info', duration = 4000) {
+      const container = document.getElementById('toast-container');
+      const icons = { success: '✅', error: '❌', info: 'ℹ️', warning: '⚠️' };
+      const toast = document.createElement('div');
+      toast.className = `toast toast-${type}`;
+      toast.innerHTML = `<span>${icons[type] || 'ℹ️'}</span><span>${message}</span>`;
+      container.appendChild(toast);
+      // Remove after duration
+      setTimeout(() => {
+        toast.classList.add('toast-out');
+        setTimeout(() => toast.remove(), 300);
+      }, duration);
+      // Click to dismiss immediately
+      toast.addEventListener('click', () => {
+        toast.classList.add('toast-out');
+        setTimeout(() => toast.remove(), 300);
+      });
+    }
+
+    // ─── Sound notifications (Web Audio API, no files needed) ───
+    let _audioCtx = null;
+    function _getAudioCtx() {
+      if (!_audioCtx) {
+        try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch { return null; }
+      }
+      return _audioCtx;
+    }
+
+    function playBeep(type) {
+      const ctx = _getAudioCtx();
+      if (!ctx) return;
+      try {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        if (type === 'success') {
+          // Two ascending tones: ding-ding!
+          osc.frequency.setValueAtTime(880, ctx.currentTime);
+          osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.12);
+          gain.gain.setValueAtTime(0.15, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.35);
+        } else if (type === 'error') {
+          // Low buzz: brrr
+          osc.frequency.setValueAtTime(220, ctx.currentTime);
+          osc.frequency.setValueAtTime(180, ctx.currentTime + 0.15);
+          gain.gain.setValueAtTime(0.2, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.4);
+        } else {
+          // Short single beep
+          osc.frequency.setValueAtTime(660, ctx.currentTime);
+          gain.gain.setValueAtTime(0.12, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.2);
+        }
+      } catch { /* Audio not available */ }
+    }
+
+    // ─── Animated favicon ───
+    let _faviconInterval = null;
+
+    function _drawFavicon(opacity) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 32;
+      canvas.height = 32;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, 32, 32);
+      ctx.globalAlpha = opacity;
+      ctx.font = '24px serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('⚡', 16, 17);
+      document.getElementById('favicon').href = canvas.toDataURL();
+    }
+
+    function startFaviconAnimation() {
+      let bright = true;
+      _faviconInterval = setInterval(() => {
+        bright = !bright;
+        _drawFavicon(bright ? 1.0 : 0.35);
+      }, 600);
+    }
+
+    function stopFaviconAnimation() {
+      if (_faviconInterval) {
+        clearInterval(_faviconInterval);
+        _faviconInterval = null;
+      }
+      _drawFavicon(1.0);
+    }
+
+    // Draw initial static favicon
+    _drawFavicon(1.0);
+
     // ─── State ───
     let currentTaskId = null;
     let eventSource = null;
     let trainedStudentId = null;
     let lastChartLen = 0;  // Track last chart data length to avoid redraws
+    let lastChartUpdate = 0;  // Timestamp throttle for chart updates
+
+    // Rolling log buffer: keep only the last N lines for performance
+    const MAX_LOG_LINES = 500;
+    let logLines = [];
+
+    function appendLogs(text) {
+      if (!text) return;
+      // Split incoming text into lines and add to buffer
+      const lines = text.split('\n');
+      for (const line of lines) {
+        if (line.length > 0) logLines.push(line);
+      }
+      // Trim old lines
+      if (logLines.length > MAX_LOG_LINES) {
+        logLines = logLines.slice(-MAX_LOG_LINES);
+      }
+      // Render: join with newlines, preserving trailing newline for the prompt
+      $('logs-box').textContent = logLines.join('\n') + '\n';
+      $('logs-box').scrollTop = $('logs-box').scrollHeight;
+    }
 
     function setTrainingMode(active) {
       $('train-btn').disabled = active;
       $('cancel-btn').classList.toggle('hidden', !active);
       $('cancel-btn').style.display = active ? 'flex' : 'none';
+
+      // Disable config controls while training
+      const panel = $('config-panel');
+      panel.classList.toggle('controls-disabled', active);
+      $('lock-badge').classList.toggle('visible', active);
+
+      const controls = [
+        'dataset', 'teacher', 'student',
+        'compression', 'epochs', 'temperature',
+        'alpha', 'patience', 'batch-size',
+      ];
+      controls.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = active;
+      });
     }
+
+    // ─── Presets ───
+    const PRESETS = {
+      quick:     { epochs: 5,  temperature: 6,  alpha: 80, compression: 15, patience: 0,  'batch-size': 64 },
+      balanced:  { epochs: 10, temperature: 4,  alpha: 70, compression: 5,  patience: 3,  'batch-size': 64 },
+      ultrafast: { epochs: 3,  temperature: 8,  alpha: 90, compression: 25, patience: 0,  'batch-size': 128 },
+    };
+
+    function applyPreset(name) {
+      const values = PRESETS[name];
+      if (!values) return;
+      ['epochs', 'temperature', 'alpha', 'compression', 'patience', 'batch-size'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.value = values[id];
+        // Trigger the input event so the display updates
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      showToast(`🎯 Preset: ${name.charAt(0).toUpperCase() + name.slice(1)}`, 'info');
+    }
+
+    document.querySelectorAll('.preset-btn').forEach(btn => {
+      btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
+    });
+
+    // ─── Share config link ───
+    function buildConfigQuery() {
+      const params = new URLSearchParams();
+      params.set('dataset', $('dataset').value);
+      params.set('teacher', $('teacher').value);
+      params.set('student', $('student').value);
+      params.set('epochs', $('epochs').value);
+      params.set('temperature', $('temperature').value);
+      params.set('alpha', (parseInt($('alpha').value) / 100).toFixed(2));
+      params.set('patience', $('patience').value);
+      params.set('compression', $('compression').value);
+      params.set('batch_size', $('batch-size').value);
+      return params.toString();
+    }
+
+    function applyConfigFromQuery() {
+      const params = new URLSearchParams(window.location.search);
+      if (params.size === 0) return;
+      const map = {
+        dataset: 'dataset', teacher: 'teacher', student: 'student',
+        epochs: 'epochs', temperature: 'temperature', patience: 'patience',
+        compression: 'compression', batch_size: 'batch-size',
+      };
+      // alpha is special (0-100 scale on slider)
+      const alphaStr = params.get('alpha');
+      if (alphaStr) {
+        const el = $('alpha');
+        el.value = Math.round(parseFloat(alphaStr) * 100);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      for (const [key, id] of Object.entries(map)) {
+        const val = params.get(key);
+        if (val) {
+          const el = document.getElementById(id);
+          if (el && !el.disabled) {
+            el.value = val;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        }
+      }
+      if (params.size > 0) {
+        showToast('🔗 Config loaded from URL', 'info');
+      }
+    }
+
+    $('share-config-btn').addEventListener('click', () => {
+      const qs = buildConfigQuery();
+      const url = window.location.origin + window.location.pathname + '?' + qs;
+      navigator.clipboard.writeText(url).then(() => {
+        showToast('🔗 Config link copied!', 'success');
+      }).catch(() => {
+        // Fallback: select the URL text
+        const input = document.createElement('input');
+        input.value = url;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        document.body.removeChild(input);
+        showToast('🔗 Config link copied!', 'success');
+      });
+    });
+
+    // Load config from URL on page load
+    applyConfigFromQuery();
 
     // ─── Training ───
     $('train-btn').addEventListener('click', async () => {
@@ -419,6 +1009,7 @@
       $('progress-bar').style.width = '0%';
       $('progress-pct').textContent = '0%';
       $('logs-box').textContent = '';
+      logLines = [];
       $('status-card').innerHTML = '<p class="text-brand-400">⏳ Starting training...</p>';
 
       // Reset chart
@@ -436,6 +1027,8 @@
         });
         const data = await res.json();
         currentTaskId = data.task_id;
+        showToast('🚀 Training started', 'info');
+        startFaviconAnimation();
 
         $('btn-text').textContent = 'Training...';
 
@@ -463,6 +1056,8 @@
           currentTaskId = null;
           eventSource.close();
           eventSource = null;
+          showToast('⛔ Training cancelled', 'warning');
+          stopFaviconAnimation();
         });
 
         eventSource.addEventListener('error', (e) => {
@@ -485,39 +1080,61 @@
 
       // Logs
       if (data.logs) {
-        $('logs-box').textContent += data.logs;
-        $('logs-box').scrollTop = $('logs-box').scrollHeight;
+        appendLogs(data.logs);
       }
 
       // Status
       if (data.current_epoch != null && data.total_epochs) {
         let html = `
-          <div class="flex justify-between"><span class="text-slate-400">Status</span><span class="text-brand-400 font-medium capitalize">${data.status}</span></div>
-          <div class="flex justify-between"><span class="text-slate-400">Epoch</span><span class="font-mono">${data.current_epoch} / ${data.total_epochs}</span></div>`;
+          <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Status</span><span class="text-brand-600 dark:text-brand-400 font-medium capitalize">${data.status}</span></div>
+          <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Epoch</span><span class="font-mono text-slate-800 dark:text-slate-100">${data.current_epoch} / ${data.total_epochs}</span></div>`;
         if (data.current_loss != null) {
-          html += `<div class="flex justify-between"><span class="text-slate-400">Loss</span><span class="font-mono text-brand-400">${data.current_loss.toFixed(4)}</span></div>`;
+          html += `<div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Loss</span><span class="font-mono text-brand-600 dark:text-brand-400">${data.current_loss.toFixed(4)}</span></div>`;
         }
         if (data.current_acc != null) {
-          html += `<div class="flex justify-between"><span class="text-slate-400">Accuracy</span><span class="font-mono text-emerald-400">${(data.current_acc * 100).toFixed(2)}%</span></div>`;
+          html += `<div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Accuracy</span><span class="font-mono text-emerald-500 dark:text-emerald-400">${(data.current_acc * 100).toFixed(2)}%</span></div>`;
         }
         if (data.eta_seconds != null && data.eta_seconds > 0) {
           const eta = data.eta_seconds > 60
             ? Math.round(data.eta_seconds / 60) + 'm ' + Math.round(data.eta_seconds % 60) + 's'
             : Math.round(data.eta_seconds) + 's';
-          html += `<div class="flex justify-between"><span class="text-slate-400">ETA</span><span class="font-mono text-yellow-400">${eta}</span></div>`;
+          html += `<div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">ETA</span><span class="font-mono text-yellow-500 dark:text-yellow-400">${eta}</span></div>`;
         }
         $('status-card').innerHTML = html;
       }
 
-      // Chart — only redraw when data actually changed
+      // Chart — throttled + downsampled to avoid blocking the main thread
       if (data.losses && data.losses.length > 0) {
         if (!chart) initChart();
         if (data.losses.length !== lastChartLen) {
+          const now = Date.now();
+          if (now - lastChartUpdate < 300) return;  // throttle: max 1 update per 300ms
+          lastChartUpdate = now;
+
           lastChartLen = data.losses.length;
-          const labels = data.losses.map((_, i) => `E${i + 1}`);
-          chart.data.labels = labels;
-          chart.data.datasets[0].data = data.losses;
-          chart.data.datasets[1].data = data.accuracies || [];
+          // Downsample if too many points (show every Nth point)
+          const total = data.losses.length;
+          if (total > 200) {
+            const step = Math.ceil(total / 200);
+            const sampledLabels = [];
+            const sampledLoss = [];
+            const sampledAcc = [];
+            for (let i = 0; i < total; i += step) {
+              sampledLabels.push(`E${i + 1}`);
+              sampledLoss.push(data.losses[i]);
+              if (data.accuracies && data.accuracies[i] != null) {
+                sampledAcc.push(data.accuracies[i]);
+              }
+            }
+            chart.data.labels = sampledLabels;
+            chart.data.datasets[0].data = sampledLoss;
+            chart.data.datasets[1].data = sampledAcc;
+          } else {
+            const labels = data.losses.map((_, i) => `E${i + 1}`);
+            chart.data.labels = labels;
+            chart.data.datasets[0].data = data.losses;
+            chart.data.datasets[1].data = data.accuracies || [];
+          }
           chart.update('none');
         }
       }
@@ -526,11 +1143,14 @@
     function onTrainingComplete(data) {
       const r = data.result;
       if (!r) return;
+      stopFaviconAnimation();
+      playBeep('success');
 
       trainedStudentId = currentTaskId;  // save BEFORE nullifying
       currentTaskId = null;
       eventSource.close();
       eventSource = null;
+      showToast('✅ Training complete!', 'success');
 
       setTrainingMode(false);
       $('btn-icon').textContent = '🚀';
@@ -539,54 +1159,104 @@
 
       // Status
       $('status-card').innerHTML = `
-        <div class="flex justify-between"><span class="text-slate-400">Status</span><span class="text-emerald-400 font-medium">✅ Complete</span></div>
-        <div class="flex justify-between"><span class="text-slate-400">Final Loss</span><span class="font-mono text-brand-400">${r.final_loss}</span></div>
-        <div class="flex justify-between"><span class="text-slate-400">Final Accuracy</span><span class="font-mono text-emerald-400">${(r.final_accuracy * 100).toFixed(2)}%</span></div>
-        <div class="flex justify-between"><span class="text-slate-400">Speedup</span><span class="font-mono text-yellow-400">${r.speedup}x</span></div>`;
+        <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Status</span><span class="text-emerald-500 dark:text-emerald-400 font-medium">✅ Complete</span></div>
+        <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Final Loss</span><span class="font-mono text-brand-600 dark:text-brand-400">${r.final_loss}</span></div>
+        <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Final Accuracy</span><span class="font-mono text-emerald-500 dark:text-emerald-400">${(r.final_accuracy * 100).toFixed(2)}%</span></div>
+        <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Speedup</span><span class="font-mono text-yellow-500 dark:text-yellow-400">${r.speedup}x</span></div>`;
 
       // Results section
       $('results-section').classList.remove('hidden');
+      // Auto-scroll to results
+      setTimeout(() => $('results-section').scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
       $('results-content').innerHTML = `
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-slate-500 text-xs uppercase border-b border-slate-800">
-                <th class="text-left py-2 px-3"></th>
-                <th class="text-right py-2 px-3">Parameters</th>
-                <th class="text-right py-2 px-3">Latency</th>
-                <th class="text-right py-2 px-3">Throughput</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b border-slate-800/50">
-                <td class="py-2.5 px-3 font-medium text-slate-300">🧠 ${r.teacher_name}</td>
-                <td class="text-right py-2.5 px-3 font-mono text-slate-400">${formatNumber(r.teacher_params)}</td>
-                <td class="text-right py-2.5 px-3 font-mono text-slate-400">${r.teacher_latency_ms} ms</td>
-                <td class="text-right py-2.5 px-3 font-mono text-slate-400">${r.teacher_throughput} img/s</td>
-              </tr>
-              <tr>
-                <td class="py-2.5 px-3 font-medium text-slate-300">⚡ ${r.student_name}</td>
-                <td class="text-right py-2.5 px-3 font-mono text-brand-400">${formatNumber(r.student_params)}</td>
-                <td class="text-right py-2.5 px-3 font-mono text-emerald-400">${r.student_latency_ms} ms</td>
-                <td class="text-right py-2.5 px-3 font-mono text-emerald-400">${r.student_throughput} img/s</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="grid grid-cols-2 gap-3 mt-3">
-          <div class="bg-slate-800 rounded-lg p-3 text-center">
-            <p class="text-xs text-slate-500 mb-0.5">Compression</p>
-            <p class="text-lg font-bold text-brand-400">${r.compression_pct}%</p>
-            <p class="text-xs text-slate-600">smaller than teacher</p>
+        <!-- Visual comparison: latency & throughput bars -->
+        <div class="space-y-4">
+          <!-- Latency bar -->
+          <div>
+            <div class="flex justify-between text-xs mb-1">
+              <span class="text-slate-500 dark:text-slate-400 font-medium">⏱️ Latency</span>
+              <span class="text-slate-400 dark:text-slate-500">lower is better</span>
+            </div>
+            <div class="space-y-1">
+              <div class="flex items-center gap-2 text-xs">
+                <span class="w-16 sm:w-20 text-right text-slate-500 dark:text-slate-400 truncate" title="${r.teacher_name}">🧠 ${r.teacher_name}</span>
+                <div class="flex-1 bg-slate-200 dark:bg-slate-700 rounded-full h-5 overflow-hidden relative">
+                  <div class="h-full bg-red-400/60 dark:bg-red-500/40 rounded-full flex items-center justify-end px-2 transition-all"
+                       style="width:100%">
+                    <span class="text-xs font-mono text-red-700 dark:text-red-300">${r.teacher_latency_ms} ms</span>
+                  </div>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 text-xs">
+                <span class="w-16 sm:w-20 text-right text-slate-500 dark:text-slate-400 truncate" title="${r.student_name}">⚡ ${r.student_name}</span>
+                <div class="flex-1 bg-slate-200 dark:bg-slate-700 rounded-full h-5 overflow-hidden relative">
+                  <div class="h-full bg-emerald-400/60 dark:bg-emerald-500/40 rounded-full flex items-center justify-end px-2 transition-all"
+                       style="width:${Math.min(r.student_latency_ms / r.teacher_latency_ms * 100, 100)}%">
+                    <span class="text-xs font-mono text-emerald-700 dark:text-emerald-300">${r.student_latency_ms} ms</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="bg-slate-800 rounded-lg p-3 text-center">
+
+          <!-- Throughput bar -->
+          <div>
+            <div class="flex justify-between text-xs mb-1">
+              <span class="text-slate-500 dark:text-slate-400 font-medium">⚡ Throughput</span>
+              <span class="text-slate-400 dark:text-slate-500">higher is better</span>
+            </div>
+            <div class="space-y-1">
+              <div class="flex items-center gap-2 text-xs">
+                <span class="w-16 sm:w-20 text-right text-slate-500 dark:text-slate-400 truncate" title="${r.teacher_name}">🧠 ${r.teacher_name}</span>
+                <div class="flex-1 bg-slate-200 dark:bg-slate-700 rounded-full h-5 overflow-hidden relative">
+                  <div class="h-full bg-red-400/60 dark:bg-red-500/40 rounded-full flex items-center justify-end px-2 transition-all"
+                       style="width:${Math.min(r.teacher_throughput / r.student_throughput * 100, 100)}%">
+                    <span class="text-xs font-mono text-red-700 dark:text-red-300">${r.teacher_throughput} img/s</span>
+                  </div>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 text-xs">
+                <span class="w-16 sm:w-20 text-right text-slate-500 dark:text-slate-400 truncate" title="${r.student_name}">⚡ ${r.student_name}</span>
+                <div class="flex-1 bg-slate-200 dark:bg-slate-700 rounded-full h-5 overflow-hidden relative">
+                  <div class="h-full bg-emerald-400/60 dark:bg-emerald-500/40 rounded-full flex items-center justify-end px-2 transition-all"
+                       style="width:100%">
+                    <span class="text-xs font-mono text-emerald-700 dark:text-emerald-300">${r.student_throughput} img/s</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Parameter count & compression cards -->
+          <div class="flex flex-wrap gap-3 text-xs pt-1">
+            <div class="bg-slate-100 dark:bg-slate-800 rounded-lg px-3 py-2 flex items-center gap-2">
+              <span class="text-slate-400">🧠 Params</span>
+              <span class="font-mono text-red-500 dark:text-red-400">${formatNumber(r.teacher_params)}</span>
+              <span class="text-slate-300 dark:text-slate-600">→</span>
+              <span class="font-mono text-emerald-500 dark:text-emerald-400">${formatNumber(r.student_params)}</span>
+            </div>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+          <div class="bg-slate-100 dark:bg-slate-800 rounded-lg p-3 text-center">
+            <p class="text-xs text-slate-500 mb-0.5">Compression</p>
+            <p class="text-lg font-bold text-brand-600 dark:text-brand-400">${r.compression_pct}%</p>
+            <p class="text-xs text-slate-400 dark:text-slate-600">smaller than teacher</p>
+          </div>
+          <div class="bg-slate-100 dark:bg-slate-800 rounded-lg p-3 text-center">
             <p class="text-xs text-slate-500 mb-0.5">Speedup</p>
-            <p class="text-lg font-bold text-yellow-400">${r.speedup}×</p>
-            <p class="text-xs text-slate-600">faster inference</p>
+            <p class="text-lg font-bold text-yellow-500 dark:text-yellow-400">${r.speedup}×</p>
+            <p class="text-xs text-slate-400 dark:text-slate-600">faster inference</p>
           </div>
         </div>`;
 
-      // Show export section
+      // Show export section with size estimates
+      if (r.student_params) {
+        const bytes = r.student_params * 4;  // FP32
+        const onnxMB = (bytes * 1.1 / 1024 / 1024).toFixed(1);
+        const tsMB = (bytes * 1.3 / 1024 / 1024).toFixed(1);
+        $('export-size-preview').textContent = `📦 ONNX: ~${onnxMB} MB  ·  TorchScript: ~${tsMB} MB`;
+      }
       $('export-section').classList.remove('hidden');
       $('export-status').textContent = '';
     }
@@ -594,6 +1264,9 @@
     function onTrainingError(error) {
       currentTaskId = null;
       if (eventSource) { eventSource.close(); eventSource = null; }
+      stopFaviconAnimation();
+      playBeep('error');
+      showToast(error, 'error', 8000);
 
       setTrainingMode(false);
       $('btn-icon').textContent = '🚀';
@@ -601,7 +1274,7 @@
       $('progress-label').textContent = '❌ Failed';
       $('progress-bar').style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
       $('status-card').innerHTML = `<p class="text-red-400">❌ ${error}</p>`;
-      $('logs-box').textContent += '\n❌ Error: ' + error + '\n';
+      appendLogs('❌ Error: ' + error);
     }
 
     // ─── Export ───
@@ -627,24 +1300,51 @@
           a.click();
           document.body.removeChild(a);
           $('export-status').textContent = `✅ Downloaded: ${data.filename}`;
+          showToast(`📦 Exported: ${data.filename}`, 'success');
         } else {
           $('export-status').textContent = `❌ ${data.detail || 'Export failed'}`;
+          showToast(`❌ Export failed: ${data.detail || 'Unknown error'}`, 'error', 6000);
         }
       } catch (err) {
         $('export-status').textContent = `❌ ${err.message}`;
+        showToast(`❌ Export error: ${err.message}`, 'error', 6000);
       }
     }
 
     $('export-onnx-btn').addEventListener('click', () => exportModel('onnx'));
     $('export-ts-btn').addEventListener('click', () => exportModel('torchscript'));
 
-    // ─── Cancel ───
-    $('cancel-btn').addEventListener('click', async () => {
+    // ─── Cancel with confirmation ───
+    $('cancel-btn').addEventListener('click', () => {
+      if (!currentTaskId) return;
+      $('confirm-overlay').classList.remove('hidden');
+    });
+
+    $('confirm-no').addEventListener('click', () => {
+      $('confirm-overlay').classList.add('hidden');
+    });
+
+    $('confirm-yes').addEventListener('click', async () => {
+      $('confirm-overlay').classList.add('hidden');
       if (!currentTaskId) return;
       try {
         await fetch(`/api/train/${currentTaskId}/cancel`, { method: 'POST' });
       } catch (err) {
         console.error('Cancel failed:', err);
+      }
+    });
+
+    // Close modal on overlay click
+    $('confirm-overlay').addEventListener('click', (e) => {
+      if (e.target === $('confirm-overlay')) {
+        $('confirm-overlay').classList.add('hidden');
+      }
+    });
+
+    // Escape key closes modal
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !$('confirm-overlay').classList.contains('hidden')) {
+        $('confirm-overlay').classList.add('hidden');
       }
     });
 
@@ -658,7 +1358,7 @@
           container.innerHTML = '<p class="text-sm text-slate-500 italic">No runs yet. Train a model!</p>';
           return;
         }
-        let html = '<div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-slate-500 uppercase border-b border-slate-800">' +
+        let html = '<div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-slate-500 dark:text-slate-400 uppercase border-b border-slate-300 dark:border-slate-800">' +
           '<th class="text-left py-1.5 px-2">When</th>' +
           '<th class="text-left py-1.5 px-2">Dataset</th>' +
           '<th class="text-left py-1.5 px-2">Teacher</th>' +
@@ -675,8 +1375,8 @@
           const acc = res.final_accuracy != null ? (res.final_accuracy * 100).toFixed(1) + '%' : '--';
           const speedup = res.speedup ? res.speedup + '×' : '--';
           const params = res.student_params ? formatNumber(res.student_params) : '--';
-          const color = status === 'completed' ? 'text-slate-300' : 'text-red-400';
-          html += `<tr class="border-b border-slate-800/40 hover:bg-slate-800/30 ${color}">` +
+          const color = status === 'completed' ? 'text-slate-700 dark:text-slate-300' : 'text-red-400';
+          html += `<tr class="border-b border-slate-200 dark:border-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-800/30 ${color}">` +
             `<td class="py-1.5 px-2">${when}</td>` +
             `<td class="py-1.5 px-2">${cfg.dataset || '--'}</td>` +
             `<td class="py-1.5 px-2">${cfg.teacher || '--'}</td>` +
@@ -693,6 +1393,66 @@
       }
     })();
 
+    // ─── Theme toggle ───
+    const themeToggle = document.getElementById('theme-toggle');
+    const htmlEl = document.documentElement;
+
+    function updateChartTheme(dark) {
+      if (!chart) return;
+      const gridColor = dark ? 'rgba(71,85,105,0.2)' : 'rgba(148,163,184,0.25)';
+      const tickColor = dark ? '#64748b' : '#64748b';
+      chart.options.scales.x.grid.color = gridColor;
+      chart.options.scales.y.grid.color = dark ? 'rgba(71,85,105,0.15)' : 'rgba(148,163,184,0.15)';
+      chart.options.scales.y.ticks.color = tickColor;
+      chart.options.scales.y1.ticks.color = tickColor;
+      chart.update();
+    }
+
+    themeToggle.addEventListener('click', () => {
+      const isDark = htmlEl.classList.toggle('dark');
+      localStorage.setItem('theme', isDark ? 'dark' : 'light');
+      updateChartTheme(isDark);
+    });
+
+    // Listen for system theme changes
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+      if (!localStorage.getItem('theme')) {
+        htmlEl.classList.toggle('dark', e.matches);
+        updateChartTheme(e.matches);
+      }
+    });
+
+    // Also update history table row colors for light mode
+    setInterval(() => {
+      // Re-apply history row colors when theme toggles
+      const isDark = htmlEl.classList.contains('dark');
+      document.querySelectorAll('#history-content table tbody tr').forEach(tr => {
+        const colorClass = isDark ? 'text-slate-300' : 'text-slate-700';
+        if (tr.classList.contains('text-slate-300') || !isDark) {
+          tr.className = tr.className.replace(/text-slate-\d+/g, colorClass);
+        }
+      });
+    }, 1000);
+
+    // ─── Config collapse toggle ───
+    const configBody = $('config-body');
+    const configChevron = $('config-chevron');
+
+    function applyConfigCollapse(collapsed) {
+      configBody.classList.toggle('collapsed', collapsed);
+      configChevron.classList.toggle('rotated', collapsed);
+    }
+
+    // Restore from localStorage
+    const configCollapsed = localStorage.getItem('configCollapsed') === 'true';
+    applyConfigCollapse(configCollapsed);
+
+    $('config-toggle').addEventListener('click', () => {
+      const isCollapsed = !configBody.classList.contains('collapsed');
+      applyConfigCollapse(isCollapsed);
+      localStorage.setItem('configCollapsed', isCollapsed);
+    });
+
     // ─── Keyboard shortcuts ───
     document.addEventListener('keydown', (e) => {
       const isCtrl = e.ctrlKey || e.metaKey;
@@ -706,7 +1466,7 @@
         if (trainedStudentId) {
           exportModel('onnx');
         } else {
-          $('export-status').textContent = '❌ No model to export. Train first.';
+          showToast('No model to export — train first', 'warning');
         }
       }
     });

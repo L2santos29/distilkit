@@ -57,6 +57,7 @@ def export_to_onnx(
 
     # Verify export
     import onnx
+
     onnx_model = onnx.load(str(output_path))
     onnx.checker.check_model(onnx_model)
 
@@ -88,7 +89,9 @@ def export_to_torchscript(
 
     torch.jit.save(traced, str(output_path))
 
-    logger.info(f"✅ Exported TorchScript to {output_path} ({output_path.stat().st_size / 1e6:.1f} MB)")
+    logger.info(
+        f"✅ Exported TorchScript to {output_path} ({output_path.stat().st_size / 1e6:.1f} MB)"
+    )
     return output_path
 
 
@@ -104,7 +107,6 @@ def quantize_model(
         Quantized model ready for ONNX Runtime.
     """
     model.eval()
-    qconfig = torch.ao.quantization.get_default_qconfig("x86")
     torch.ao.quantization.prepare(model, inplace=True)
     # Note: calibration data required in production use
     torch.ao.quantization.convert(model, inplace=True)

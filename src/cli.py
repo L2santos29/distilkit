@@ -7,90 +7,26 @@ import sys
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
 
-from src.log_config import logger
-from src.teacher import load_teacher
-from src.student import build_student
+from src import datasets as ds
+from src.benchmarks import benchmark, compare_teacher_student
 from src.distiller import Distiller
-from src.benchmarks import compare_teacher_student, benchmark
+from src.log_config import logger
 from src.onnx_export import export_to_onnx, export_to_torchscript
+from src.student import build_student
+from src.teacher import load_teacher
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-DATASETS = {
-    "CIFAR-10": {"num_classes": 10, "in_channels": 3, "input_size": 32,
-                 "mean": (0.4914, 0.4822, 0.4465), "std": (0.247, 0.243, 0.261),
-                 "class": "CIFAR10"},
-    "MNIST": {"num_classes": 10, "in_channels": 1, "input_size": 28,
-               "mean": (0.1307,), "std": (0.3081,), "class": "MNIST"},
-    "FashionMNIST": {"num_classes": 10, "in_channels": 1, "input_size": 28,
-                      "mean": (0.2860,), "std": (0.3530,), "class": "FashionMNIST"},
-    "SVHN": {"num_classes": 10, "in_channels": 3, "input_size": 32,
-              "mean": (0.4377, 0.4438, 0.4728), "std": (0.1980, 0.2010, 0.1970),
-              "class": "SVHN"},
-}
-
-DATASET_CHOICES = ["CIFAR-10", "MNIST", "FashionMNIST", "SVHN"]
-
-TEACHER_CHOICES = [
-    "resnet18", "resnet34", "resnet50", "resnet101",
-    "mobilenet_v2", "mobilenet_v3_large",
-    "efficientnet_b0", "efficientnet_b1",
-]
+DATASET_CHOICES = ds.DATASET_CHOICES
+TEACHER_CHOICES = ds.TEACHER_CHOICES
 
 # ---------------------------------------------------------------------------
 # Data helpers
 # ---------------------------------------------------------------------------
 
 
-def _get_dataset_loaders(
-    dataset_name: str, batch_size: int, data_root: str = "./data"
-) -> tuple[DataLoader, DataLoader, int, int]:
-    """Return (train_loader, val_loader, num_classes, in_channels) for any dataset."""
-    import importlib
-
-    info = DATASETS[dataset_name]
-    ds_module = importlib.import_module("torchvision.datasets")
-    ds_class = getattr(ds_module, info["class"])
-    ds_root = os.path.join(data_root, dataset_name)
-    os.makedirs(ds_root, exist_ok=True)
-
-    mean, std = info["mean"], info["std"]
-    input_size = info["input_size"]
-
-    transform_train = transforms.Compose([
-        transforms.RandomCrop(input_size, padding=4 if input_size >= 28 else 2),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize(mean, std),
-    ])
-    transform_val = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean, std),
-    ])
-
-    download = True
-    if dataset_name == "SVHN":
-        train_set = ds_class(root=ds_root, split="train", download=download, transform=transform_train)
-        val_set = ds_class(root=ds_root, split="test", download=download, transform=transform_val)
-    else:
-        train_set = ds_class(root=ds_root, train=True, download=download, transform=transform_train)
-        val_set = ds_class(root=ds_root, train=False, download=download, transform=transform_val)
-
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=2)
-    return train_loader, val_loader, info["num_classes"], info["in_channels"]
-    train_loader = DataLoader(
-        train_set, batch_size=batch_size, shuffle=True, num_workers=2
-    )
-    val_loader = DataLoader(
-        val_set, batch_size=batch_size, shuffle=False, num_workers=2
-    )
-    return train_loader, val_loader
+def _get_dataset_loaders(dataset_name: str, batch_size: int, data_root: str = "./data"):
+    """Return (train_loader, val_loader, num_classes, in_channels) via shared module."""
+    return ds.get_dataset_loaders(dataset_name, batch_size, data_root)
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="distilkit",
         description="⚡ DistilKit — Knowledge Distillation Framework\n"
-                    "Compress large teacher models into fast student models.",
+        "Compress large teacher models into fast student models.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
@@ -121,76 +57,104 @@ def build_parser() -> argparse.ArgumentParser:
         "train", help="Run knowledge distillation (teacher → student)"
     )
     train_parser.add_argument(
-        "--dataset", default="CIFAR-10", choices=DATASET_CHOICES,
+        "--dataset",
+        default="CIFAR-10",
+        choices=DATASET_CHOICES,
         help="Dataset to use (default: CIFAR-10)",
     )
     train_parser.add_argument(
-        "--teacher", default="resnet18", choices=TEACHER_CHOICES,
+        "--teacher",
+        default="resnet18",
+        choices=TEACHER_CHOICES,
         help="Teacher model architecture (default: resnet18)",
     )
     train_parser.add_argument(
-        "--epochs", type=int, default=10,
+        "--epochs",
+        type=int,
+        default=10,
         help="Number of training epochs (default: 10)",
     )
     train_parser.add_argument(
-        "--temperature", type=float, default=4.0,
+        "--temperature",
+        type=float,
+        default=4.0,
         help="Distillation temperature — higher = softer targets (default: 4.0)",
     )
     train_parser.add_argument(
-        "--compression-ratio", type=float, default=0.05,
+        "--compression-ratio",
+        type=float,
+        default=0.05,
         help="Target student/teacher parameter ratio (default: 0.05 = 5%)",
     )
     train_parser.add_argument(
-        "--alpha", type=float, default=0.7,
+        "--alpha",
+        type=float,
+        default=0.7,
         help="Distillation loss weight (0-1). Higher = more teacher influence (default: 0.7)",
     )
     train_parser.add_argument(
-        "--patience", type=int, default=0,
+        "--patience",
+        type=int,
+        default=0,
         help="Early stopping patience (0 to disable, default: 0)",
     )
     train_parser.add_argument(
-        "--batch-size", type=int, default=64,
+        "--batch-size",
+        type=int,
+        default=64,
         help="Training batch size (default: 64)",
     )
     train_parser.add_argument(
-        "--export", choices=["onnx", "torchscript", "none"], default="none",
+        "--export",
+        choices=["onnx", "torchscript", "none"],
+        default="none",
         help="Export trained student model (default: none)",
     )
     train_parser.add_argument(
-        "--benchmark", choices=["cpu", "cuda", "none"], default="cpu",
+        "--benchmark",
+        choices=["cpu", "cuda", "none"],
+        default="cpu",
         help="Benchmark teacher vs student on target device (default: cpu)",
     )
     train_parser.add_argument(
-        "--output-dir", default="checkpoints",
+        "--output-dir",
+        default="checkpoints",
         help="Directory for exported models (default: checkpoints)",
     )
     train_parser.add_argument(
-        "--ckpt-every", type=int, default=5,
+        "--ckpt-every",
+        type=int,
+        default=5,
         help="Save checkpoint every N epochs (0 to disable, default: 5)",
     )
     train_parser.add_argument(
-        "--resume", default=None,
+        "--resume",
+        default=None,
         help="Path to checkpoint to resume from (.pt file)",
     )
     train_parser.add_argument(
-        "--data-dir", default="./data",
+        "--data-dir",
+        default="./data",
         help="Dataset cache directory (default: ./data)",
     )
 
     # ---- benchmark ----
-    bench_parser = subparsers.add_parser(
-        "benchmark", help="Benchmark a trained model"
-    )
+    bench_parser = subparsers.add_parser("benchmark", help="Benchmark a trained model")
     bench_parser.add_argument(
-        "--model", required=True,
+        "--model",
+        required=True,
         help="Path to model file (.onnx, .pt, or .pth)",
     )
     bench_parser.add_argument(
-        "--target", choices=["cpu", "cuda", "npu"], default="cpu",
+        "--target",
+        choices=["cpu", "cuda", "npu"],
+        default="cpu",
         help="Target device (default: cpu)",
     )
     bench_parser.add_argument(
-        "--runs", type=int, default=100,
+        "--runs",
+        type=int,
+        default=100,
         help="Number of inference runs (default: 100)",
     )
 
@@ -199,22 +163,34 @@ def build_parser() -> argparse.ArgumentParser:
         "export", help="Export a trained model to ONNX or TorchScript"
     )
     export_parser.add_argument(
-        "--model", required=True,
+        "--model",
+        required=True,
         help="Path to PyTorch model (.pth)",
     )
     export_parser.add_argument(
-        "--format", choices=["onnx", "torchscript"], default="onnx",
+        "--format",
+        choices=["onnx", "torchscript"],
+        default="onnx",
         help="Export format (default: onnx)",
     )
     export_parser.add_argument(
-        "--output", default=None,
+        "--output",
+        default=None,
         help="Output path (default: checkpoints/student.<format>)",
     )
 
     # ---- gui ----
-    subparsers.add_parser(
+    gui_parser = subparsers.add_parser(
         "gui", help="Launch the web-based GUI (FastAPI + Tailwind CSS)"
     )
+    gui_parser.add_argument(
+        "--api-only",
+        action="store_true",
+        help="Run in API-only mode (no frontend)",
+    )
+
+    # ---- api ----
+    subparsers.add_parser("api", help="Launch API-only server (no frontend)")
 
     return parser
 
@@ -273,15 +249,14 @@ def cmd_train(args: argparse.Namespace) -> nn.Module | None:
         start_epoch = 0
 
     distiller = Distiller(
-        teacher, student,
+        teacher,
+        student,
         temperature=args.temperature,
         alpha=args.alpha,
     )
 
     # For checkpointing, we implement the training loop here
     # instead of calling distiller.train() so we can save mid-training
-    import torch.nn.functional as F
-    from torch.utils.data import DataLoader
 
     optimizer = torch.optim.Adam(student.parameters(), lr=1e-3)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs)
@@ -333,19 +308,22 @@ def cmd_train(args: argparse.Namespace) -> nn.Module | None:
 
         scheduler.step()
 
-        logger.info(f"Epoch {epoch+1}/{args.epochs} — Loss: {avg_loss:.4f} — Val Acc: {acc:.2%}")
+        logger.info(f"Epoch {epoch + 1}/{args.epochs} — Loss: {avg_loss:.4f} — Val Acc: {acc:.2%}")
 
         # Checkpoint
         if args.ckpt_every > 0 and (epoch + 1) % args.ckpt_every == 0:
-            ckpt_path = f"checkpoints/checkpoint_epoch_{epoch+1}.pt"
-            torch.save({
-                "epoch": epoch + 1,
-                "model": student.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "losses": history["train_loss"],
-                "accuracies": history["val_acc"],
-                "config": vars(args),
-            }, ckpt_path)
+            ckpt_path = f"checkpoints/checkpoint_epoch_{epoch + 1}.pt"
+            torch.save(
+                {
+                    "epoch": epoch + 1,
+                    "model": student.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "losses": history["train_loss"],
+                    "accuracies": history["val_acc"],
+                    "config": vars(args),
+                },
+                ckpt_path,
+            )
             logger.info(f"   💾 Checkpoint saved: {ckpt_path}")
 
     print()
@@ -354,10 +332,14 @@ def cmd_train(args: argparse.Namespace) -> nn.Module | None:
     if args.benchmark != "none":
         logger.info(f"📊 Benchmarking on {args.benchmark}...")
         comparison = compare_teacher_student(teacher, student, target=args.benchmark)
-        logger.info(f"   Teacher : {comparison['teacher']['mean_ms']:.2f} ms  "
-              f"({comparison['teacher']['parameters']:,} params)")
-        logger.info(f"   Student : {comparison['student']['mean_ms']:.2f} ms  "
-              f"({comparison['student']['parameters']:,} params)")
+        logger.info(
+            f"   Teacher : {comparison['teacher']['mean_ms']:.2f} ms  "
+            f"({comparison['teacher']['parameters']:,} params)"
+        )
+        logger.info(
+            f"   Student : {comparison['student']['mean_ms']:.2f} ms  "
+            f"({comparison['student']['parameters']:,} params)"
+        )
         logger.info(f"   Speedup : {comparison['speedup']}x")
         logger.info(f"   Size    : {comparison['compression']:.2%} of teacher")
         print()
@@ -383,12 +365,23 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
     ext = os.path.splitext(args.model)[1].lower()
     if ext == ".onnx":
         # ONNX model — benchmark via ONNX Runtime
-        import onnxruntime as ort
         import numpy as np
+        import onnxruntime as ort
 
-        session = ort.InferenceSession(args.model)
+        nproc = os.cpu_count() or 4
+
+        # ONNX Runtime session with optimized thread settings for CPU
+        so = ort.SessionOptions()
+        so.intra_op_num_threads = nproc
+        so.inter_op_num_threads = max(1, nproc // 2)
+        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        so.enable_cpu_mem_arena = True
+
+        session = ort.InferenceSession(args.model, so)
         input_name = session.get_inputs()[0].name
         input_shape = session.get_inputs()[0].shape
+
+        logger.info(f"   ONNX Runtime threads: intra={so.intra_op_num_threads}, inter={so.inter_op_num_threads}")
 
         dummy = np.random.randn(*input_shape).astype(np.float32)
 
@@ -398,6 +391,7 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
 
         # Benchmark
         import time
+
         timings = []
         for _ in range(args.runs):
             start = time.perf_counter()
@@ -415,6 +409,7 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
             # Try to reconstruct student and load weights
             logger.info("   Loading checkpoint...")
             from src.student import MiniCNN
+
             model = MiniCNN(num_classes=10)
             model.load_state_dict(torch.load(args.model, map_location=args.target))
 
@@ -431,6 +426,7 @@ def cmd_export(args: argparse.Namespace) -> None:
 
     # Load the PyTorch model
     from src.student import MiniCNN
+
     model = MiniCNN(num_classes=10)
     state = torch.load(args.model, map_location="cpu")
     if isinstance(state, dict) and "state_dict" in state:
@@ -447,6 +443,7 @@ def cmd_export(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    """Entry point: parse arguments and dispatch to the right command."""
     parser = build_parser()
     args = parser.parse_args()
 
@@ -457,7 +454,9 @@ def main() -> None:
             sys.exit(1)
         try:
             from src.webapp import launch
-            launch()
+
+            api_only = getattr(args, "api_only", False) or args.command == "api"
+            launch(api_only=api_only)
         except ImportError as e:
             logger.info("❌ Web GUI dependencies not installed.")
             logger.info("   Run: pip install -r requirements.txt")

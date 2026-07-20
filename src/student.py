@@ -16,6 +16,13 @@ class MiniCNN(nn.Module):
     """
 
     def __init__(self, in_channels: int = 3, num_classes: int = 10, width: float = 1.0):
+        """Build MiniCNN with width-scalable convolutional layers.
+
+        Args:
+            in_channels: Number of input image channels.
+            num_classes: Number of output classes.
+            width: Channel multiplier for compression control.
+        """
         super().__init__()
         w = width
         c1, c2, c3, c4 = [int(32 * w), int(64 * w), int(128 * w), int(256 * w)]
@@ -27,17 +34,14 @@ class MiniCNN(nn.Module):
             nn.BatchNorm2d(c1),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
-
             nn.Conv2d(c1, c2, 3, padding=1),
             nn.BatchNorm2d(c2),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
-
             nn.Conv2d(c2, c3, 3, padding=1),
             nn.BatchNorm2d(c3),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
-
             nn.Conv2d(c3, c4, 3, padding=1),
             nn.BatchNorm2d(c4),
             nn.ReLU(inplace=True),
@@ -49,6 +53,7 @@ class MiniCNN(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through feature extractor and classifier."""
         x = self.features(x)
         x = self.classifier(x)
         return x
@@ -58,6 +63,13 @@ class MiniResNet(nn.Module):
     """Tiny ResNet-style student with configurable width."""
 
     def __init__(self, in_channels: int = 3, num_classes: int = 10, width: float = 1.0):
+        """Build MiniResNet with residual blocks and scalable width.
+
+        Args:
+            in_channels: Number of input image channels.
+            num_classes: Number of output classes.
+            width: Channel multiplier for compression control.
+        """
         super().__init__()
         w = width
         c1, c2 = int(16 * w), int(32 * w)
@@ -79,6 +91,7 @@ class MiniResNet(nn.Module):
         self.classifier = nn.Linear(c2, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through residual feature extractor and classifier."""
         x = self.features(x)
         x = x.view(x.size(0), -1)
         x = self.classifier(x)
@@ -89,6 +102,12 @@ class ResidualBlock(nn.Module):
     """Basic residual block with two conv layers."""
 
     def __init__(self, in_channels: int, out_channels: int):
+        """Build a residual block.
+
+        Args:
+            in_channels: Input channel count.
+            out_channels: Output channel count.
+        """
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(out_channels)
@@ -97,6 +116,7 @@ class ResidualBlock(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass with skip-connection."""
         identity = x
         out = self.conv1(x)
         out = self.bn1(out)
@@ -106,6 +126,7 @@ class ResidualBlock(nn.Module):
         out += identity
         out = self.relu(out)
         return out
+
 
 STUDENT_REGISTRY = {
     "MiniCNN": MiniCNN,
@@ -137,8 +158,7 @@ def build_student(
     """
     if student_type not in STUDENT_REGISTRY:
         raise ValueError(
-            f"Unknown student: {student_type}. "
-            f"Available: {list(STUDENT_REGISTRY.keys())}"
+            f"Unknown student: {student_type}. Available: {list(STUDENT_REGISTRY.keys())}"
         )
 
     # Estimate width from compression ratio
@@ -158,6 +178,4 @@ def build_student(
     else:
         w = 1.0
 
-    return STUDENT_REGISTRY[student_type](
-        in_channels=in_channels, num_classes=num_classes, width=w
-    )
+    return STUDENT_REGISTRY[student_type](in_channels=in_channels, num_classes=num_classes, width=w)

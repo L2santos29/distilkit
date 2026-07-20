@@ -52,7 +52,7 @@ class DistillationLoss(nn.Module):
         soft_student = F.log_softmax(student_logits / self.temperature, dim=1)
         soft_teacher = F.softmax(teacher_logits / self.temperature, dim=1)
         distillation_loss = F.kl_div(soft_student, soft_teacher, reduction="batchmean")
-        distillation_loss *= self.temperature ** 2
+        distillation_loss *= self.temperature**2
 
         # Hard-label loss (standard cross-entropy)
         hard_loss = self.ce_loss(student_logits, labels)
@@ -69,7 +69,7 @@ class Distiller:
         student: nn.Module,
         temperature: float = 4.0,
         alpha: float = 0.7,
-        device: str = "cpu"
+        device: str = "cpu",
     ):
         """Initialize distiller.
 
@@ -142,8 +142,7 @@ class Distiller:
 
             logger.info(
                 f"Epoch {epoch + 1}/{epochs} — "
-                f"Loss: {avg_loss:.4f}"
-                + (f" — Val Acc: {acc:.2%}" if val_loader else "")
+                f"Loss: {avg_loss:.4f}" + (f" — Val Acc: {acc:.2%}" if val_loader else "")
             )
 
         return history

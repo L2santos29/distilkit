@@ -1,0 +1,30 @@
+# Version control
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Project data (mounted as volumes at runtime)
+checkpoints/
+runs/
+data/
+assets/
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Desktop launcher (not needed in container)
+distilkit.desktop
+install_desktop.sh
+
+# Test cache
+.pytest_cache/

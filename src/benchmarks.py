@@ -109,7 +109,17 @@ def compare_teacher_student(
 
 
 def _resolve_device(target: DeviceTarget) -> torch.device:
-    """Resolve target string to torch device."""
+    """Resolve a device target string to a ``torch.device``.
+
+    Args:
+        target: Device identifier ("cpu", "cuda", "npu").
+
+    Returns:
+        Resolved torch device.
+
+    Raises:
+        RuntimeError: If CUDA is requested but not available.
+    """
     if target == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA requested but not available")
     return torch.device(target)

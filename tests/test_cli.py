@@ -1,7 +1,6 @@
 """Tests for the CLI interface."""
 
 import argparse
-from unittest.mock import patch
 
 import pytest
 
@@ -40,18 +39,29 @@ class TestParser:
     def test_train_with_custom_args(self):
         """train subcommand should accept custom values."""
         parser = build_parser()
-        args = parser.parse_args([
-            "train",
-            "--dataset", "MNIST",
-            "--teacher", "resnet50",
-            "--epochs", "20",
-            "--temperature", "5.0",
-            "--alpha", "0.5",
-            "--batch-size", "128",
-            "--patience", "3",
-            "--ckpt-every", "0",
-            "--compression-ratio", "0.1",
-        ])
+        args = parser.parse_args(
+            [
+                "train",
+                "--dataset",
+                "MNIST",
+                "--teacher",
+                "resnet50",
+                "--epochs",
+                "20",
+                "--temperature",
+                "5.0",
+                "--alpha",
+                "0.5",
+                "--batch-size",
+                "128",
+                "--patience",
+                "3",
+                "--ckpt-every",
+                "0",
+                "--compression-ratio",
+                "0.1",
+            ]
+        )
         assert args.dataset == "MNIST"
         assert args.teacher == "resnet50"
         assert args.epochs == 20
@@ -101,11 +111,17 @@ class TestParser:
     def test_export_torchscript(self):
         """export should accept torchscript format."""
         parser = build_parser()
-        args = parser.parse_args([
-            "export", "--model", "model.pth",
-            "--format", "torchscript",
-            "--output", "out.pt",
-        ])
+        args = parser.parse_args(
+            [
+                "export",
+                "--model",
+                "model.pth",
+                "--format",
+                "torchscript",
+                "--output",
+                "out.pt",
+            ]
+        )
         assert args.format == "torchscript"
         assert args.output == "out.pt"
 

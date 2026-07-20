@@ -10,7 +10,6 @@ import io
 import json
 import os
 import subprocess
-import sys
 import threading
 import uuid
 from contextlib import asynccontextmanager
@@ -22,76 +21,31 @@ import torch
 import torch.nn as nn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
+from starlette.middleware.gzip import GZipMiddleware
 
-from src.log_config import logger
-from src.teacher import load_teacher
-from src.student import build_student
-from src.distiller import Distiller
+from src import datasets as ds
 from src.benchmarks import compare_teacher_student
+from src.distiller import Distiller
+from src.log_config import logger
 from src.onnx_export import export_to_onnx, export_to_torchscript
+from src.student import build_student, STUDENT_REGISTRY
+from src.teacher import load_teacher
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
+DEVICE = "cpu"
+
+# Maximum size of the training log buffer (in characters).
+# Older entries are trimmed to prevent UI slowdown on long runs.
+MAX_LOG_SIZE = 100_000
+
 # ---------------------------------------------------------------------------
-# Dataset registry
+# API-only mode (no frontend)
 # ---------------------------------------------------------------------------
 
-DATASETS = {
-    "CIFAR-10": {
-        "num_classes": 10,
-        "in_channels": 3,
-        "input_size": 32,
-        "mean": (0.4914, 0.4822, 0.4465),
-        "std": (0.247, 0.243, 0.261),
-        "module": "torchvision.datasets",
-        "class_name": "CIFAR10",
-        "url": "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz",
-        "md5": "c58f30108f718f92721af3b95e74349a",
-        "filename": "cifar-10-python.tar.gz",
-        "extracted_dir": "cifar-10-batches-py",
-    },
-    "MNIST": {
-        "num_classes": 10,
-        "in_channels": 1,
-        "input_size": 28,
-        "mean": (0.1307,),
-        "std": (0.3081,),
-        "module": "torchvision.datasets",
-        "class_name": "MNIST",
-    },
-    "FashionMNIST": {
-        "num_classes": 10,
-        "in_channels": 1,
-        "input_size": 28,
-        "mean": (0.2860,),
-        "std": (0.3530,),
-        "module": "torchvision.datasets",
-        "class_name": "FashionMNIST",
-    },
-    "SVHN": {
-        "num_classes": 10,
-        "in_channels": 3,
-        "input_size": 32,
-        "mean": (0.4377, 0.4438, 0.4728),
-        "std": (0.1980, 0.2010, 0.1970),
-        "module": "torchvision.datasets",
-        "class_name": "SVHN",
-        "extra_train": True,  # SVHN has an extra training set
-    },
-}
-
-DATASET_CHOICES = list(DATASETS.keys())
-TEACHER_CHOICES = [
-    "resnet18", "resnet34", "resnet50", "resnet101",
-    "mobilenet_v2", "mobilenet_v3_large",
-    "efficientnet_b0", "efficientnet_b1",
-]
-DEVICE = "cpu"  # CPU-only mode (see: src/distiller.py)
-STUDENT_CHOICES = ["MiniCNN", "MiniResNet"]
+API_ONLY = os.environ.get("API_ONLY", "").lower() in ("1", "true", "yes")
 
 # ---------------------------------------------------------------------------
 # HTML template (served as static file)
@@ -105,6 +59,72 @@ TEMPLATE_FILE = HERE / "templates" / "index.html"
 # ---------------------------------------------------------------------------
 
 RUNS_DIR = "runs"
+
+# ---------------------------------------------------------------------------
+# Student model cache
+# ---------------------------------------------------------------------------
+
+_student_cache: dict[str, nn.Module] = {}
+
+
+def _get_cached_student(
+    teacher: nn.Module,
+    student_type: str,
+    compression_ratio: float,
+    num_classes: int,
+    in_channels: int,
+) -> nn.Module:
+    """Build and cache a student, or deep-copy a cached one."""
+    import copy
+    teacher_params = sum(p.numel() for p in teacher.parameters())
+    key = f"{student_type}:{compression_ratio}:{num_classes}:{in_channels}:{teacher_params}"
+    if key not in _student_cache:
+        _student_cache[key] = build_student(
+            teacher=teacher,
+            student_type=student_type,
+            compression_ratio=compression_ratio,
+            num_classes=num_classes,
+            in_channels=in_channels,
+        )
+    return copy.deepcopy(_student_cache[key])
+
+# ---------------------------------------------------------------------------
+# Student model cache: avoids rebuilding the same architecture repeatedly.
+# Keyed by (student_type, compression_ratio, num_classes, in_channels).
+# ---------------------------------------------------------------------------
+
+_student_cache: dict[tuple, nn.Module] = {}
+
+
+def _get_student(
+    student_type: str,
+    compression_ratio: float,
+    num_classes: int,
+    in_channels: int,
+) -> nn.Module:
+    """Return a cloned student model from cache, or build + cache a new one."""
+    key = (student_type, compression_ratio, num_classes, in_channels)
+    if key not in _student_cache:
+        # Build a temporary teacher to compute compression ratio
+        _student_cache[key] = STUDENT_REGISTRY[student_type](
+            in_channels=in_channels, num_classes=num_classes, width=1.0
+        )
+    # Always return a fresh copy (deep copy the state dict into a new instance)
+    base = STUDENT_REGISTRY[student_type](
+        in_channels=in_channels, num_classes=num_classes,
+        width=_compute_width(_student_cache[key], compression_ratio),
+    )
+    return base
+
+
+def _compute_width(base_model: nn.Module, compression_ratio: float) -> float:
+    """Estimate the width multiplier for a target compression ratio."""
+    base_params = sum(p.numel() for p in base_model.parameters())
+    if base_params == 0 or compression_ratio <= 0:
+        return 1.0
+    # Params scale roughly with width^2 → width ≈ sqrt(ratio * teacher_params / base_params)
+    # Since we don't have teacher_params here, use compression_ratio directly
+    return max(0.125, min(4.0, compression_ratio ** 0.5))
 
 
 def _load_history() -> list[dict]:
@@ -142,10 +162,15 @@ class TrainingTask:
     """Background training task with progress tracking."""
 
     def __init__(self, config: dict) -> None:
+        """Initialize a training task with the given configuration.
+
+        Args:
+            config: Training parameters (dataset, teacher, epochs, etc.).
+        """
         self.id = uuid.uuid4().hex[:12]
         self.config = config
-        self.status = "pending"       # pending → running → completed | failed
-        self.progress = 0.0           # 0.0 – 1.0
+        self.status = "pending"  # pending → running → completed | failed
+        self.progress = 0.0  # 0.0 – 1.0
         self.current_epoch = 0
         self.total_epochs = config["epochs"]
         self.current_loss: float | None = None
@@ -163,6 +188,7 @@ class TrainingTask:
         self.eta_seconds: float = 0.0
         self._epoch_times: list[float] = []
         self.created_at = datetime.now()
+        self._dirty = False
 
     def cancel(self) -> None:
         """Cancel a running training task."""
@@ -172,13 +198,14 @@ class TrainingTask:
             self._subprocess.terminate()
             try:
                 self._subprocess.wait(timeout=5)
-            except:
+            except Exception:
                 self._subprocess.kill()
         self.status = "cancelled"
         self._emit("\n⛔ Training cancelled.")
         self._flush_logs()
 
     def start(self) -> None:
+        """Start the training task in a background thread."""
         self.status = "running"
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -187,271 +214,34 @@ class TrainingTask:
         """Write to both logging and the task log buffer."""
         logger.info(msg)
         self._log_buffer.write(msg + "\n")
+        self._dirty = True
 
     def _flush_logs(self) -> None:
-        """Transfer accumulated buffer to the logs string."""
+        """Transfer accumulated buffer to the logs string, capping total size."""
         self.logs += self._log_buffer.getvalue()
         self._log_buffer.truncate(0)
         self._log_buffer.seek(0)
+        # Trim oldest logs if over the limit
+        if len(self.logs) > MAX_LOG_SIZE:
+            self.logs = self.logs[-MAX_LOG_SIZE:]
 
     def _prepare_dataset(self, dataset_name: str, data_root: str) -> tuple | None:
-        """Get (train_loader, val_loader, num_classes, in_channels) for any dataset.
+        """Delegate to ``datasets.get_dataset_loaders`` with cancel support."""
+        subprocess_tracker: list = []
+        self._subprocess = subprocess_tracker
 
-        Returns None if preparation fails (download error, missing files, etc.).
-        """
-        info = DATASETS[dataset_name]
-        ds_class = getattr(datasets, info["class_name"])
-        num_classes = info["num_classes"]
-        in_channels = info["in_channels"]
-        input_size = info["input_size"]
-        mean, std = info["mean"], info["std"]
-        ds_root = os.path.join(data_root, dataset_name)
-        os.makedirs(ds_root, exist_ok=True)
+        def cancel_flag() -> bool:
+            return self._cancel_requested
 
-        # ── Verify / Download ──
-        try:
-            if dataset_name == "CIFAR-10":
-                self._download_cifar10(ds_root, info)
-                # After download attempt, verify extraction exists
-                extracted = os.path.join(ds_root, info["extracted_dir"])
-                if not os.path.isdir(extracted):
-                    self._emit("❌ CIFAR-10 data not found after download.")
-                    self._flush_logs()
-                    return None
-            else:
-                # For MNIST/FashionMNIST/SVHN, check if already downloaded first
-                has_files = self._check_torchvision_dataset(dataset_name, ds_root, info)
-                if not has_files:
-                    self._emit(f"⬇️ Downloading {dataset_name}...")
-                    self._flush_logs()
-        except (OSError, IOError, RuntimeError) as e:
-            self._emit(f"❌ Dataset I/O error: {e}")
-            self._flush_logs()
-            return None
-
-        # ── Transforms ──
-        if input_size <= 32:
-            train_transform = transforms.Compose([
-                transforms.RandomCrop(input_size, padding=4 if input_size >= 28 else 2),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize(mean, std),
-            ])
-        else:
-            train_transform = transforms.Compose([
-                transforms.Resize(32),
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize(mean, std),
-            ])
-
-        val_transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-        ])
-
-        # ── Load datasets ──
-        try:
-            if dataset_name == "SVHN":
-                train_set = ds_class(
-                    root=ds_root, split="train", download=False, transform=train_transform
-                )
-                val_set = ds_class(
-                    root=ds_root, split="test", download=False, transform=val_transform
-                )
-            else:
-                train_set = ds_class(
-                    root=ds_root, train=True, download=False, transform=train_transform
-                )
-                val_set = ds_class(
-                    root=ds_root, train=False, download=False, transform=val_transform
-                )
-        except (OSError, RuntimeError) as e:
-            self._emit(f"❌ Failed to load dataset: {e}")
-            self._flush_logs()
-            return None
-
-        train_loader = DataLoader(
-            train_set, batch_size=self.config["batch_size"],
-            shuffle=True, num_workers=0  # 0 to avoid file-lock issues
+        result = ds.get_dataset_loaders(
+            dataset_name,
+            self.config["batch_size"],
+            data_root,
+            cancel_flag=cancel_flag,
+            subprocess_tracker=subprocess_tracker,
         )
-        val_loader = DataLoader(
-            val_set, batch_size=self.config["batch_size"],
-            shuffle=False, num_workers=0
-        )
-
-        return train_loader, val_loader, num_classes, in_channels
-
-    def _check_torchvision_dataset(self, name: str, root: str, info: dict) -> bool:
-        """Check if a torchvision dataset's raw files exist on disk."""
-        raw_dir = os.path.join(root, "raw")
-        if os.path.isdir(raw_dir) and len(os.listdir(raw_dir)) > 0:
-            return True
-        # Also check processed/
-        processed_dir = os.path.join(root, info["class_name"] if name != "SVHN" else "".join(c for c in name if c.isalnum()), "processed")
-        processed_dir = os.path.join(root, "processed")
-        if os.path.isdir(processed_dir) and len(os.listdir(processed_dir)) > 0:
-            return True
-        return False
-
-    def _download_cifar10(self, ds_root: str, info: dict) -> None:
-        """Optimised download for CIFAR-10 using aria2c/wget with fallback."""
-        import hashlib
-        import tarfile
-
-        cifar_urls = [
-            "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz",
-            "https://thor.robots.ox.ac.uk/pascal/data/cifar10/cifar-10-python.tar.gz",
-        ]
-        cifar_tgz = os.path.join(ds_root, info["filename"])
-        extracted_dir = os.path.join(ds_root, info["extracted_dir"])
-        expected_size = 170_498_071
-        os.makedirs(ds_root, exist_ok=True)
-
-        if os.path.isdir(extracted_dir):
-            return
-        if os.path.exists(cifar_tgz) and os.path.getsize(cifar_tgz) == expected_size:
-            self._emit("   Extracting previously downloaded file...")
-            self._flush_logs()
-            with tarfile.open(cifar_tgz, "r:gz") as tar:
-                tar.extractall(path=ds_root)
-            self._emit("   ✅ CIFAR-10 ready!")
-            self._flush_logs()
-            return
-        if os.path.exists(cifar_tgz):
-            self._emit(f"   Removing partial download ({os.path.getsize(cifar_tgz)/1e6:.0f} MB)...")
-            os.remove(cifar_tgz)
-
-        self._emit("⬇️ Downloading CIFAR-10 (170 MB)...")
-        self._flush_logs()
-
-        has_aria2c = subprocess.run(["which", "aria2c"], capture_output=True).returncode == 0
-        has_wget = subprocess.run(["which", "wget"], capture_output=True).returncode == 0
-        has_curl = subprocess.run(["which", "curl"], capture_output=True).returncode == 0
-
-        max_retries = 3
-        base_delay = 2  # seconds
-
-        for attempt in range(1, max_retries + 1):
-            if self._cancel_requested:
-                return
-
-            if attempt > 1:
-                delay = base_delay * (2 ** (attempt - 2))  # 2, 4, 8
-                self._emit(f"   Retry {attempt}/{max_retries} in {delay}s...")
-                self._flush_logs()
-                import time as _time
-                _time.sleep(delay)
-                if self._cancel_requested:
-                    return
-                # Remove partial file from previous attempt
-                if os.path.exists(cifar_tgz):
-                    os.remove(cifar_tgz)
-
-            downloaded_ok = False
-            for url in cifar_urls:
-                if self._cancel_requested:
-                    return
-                if downloaded_ok:
-                    break
-
-                if has_aria2c:
-                    self._emit("   Trying aria2c (4 connections)...")
-                    self._flush_logs()
-                    self._subprocess = subprocess.Popen([
-                        "aria2c", "-x", "4", "-s", "4",
-                        "-d", ds_root, "-o", info["filename"], url,
-                    ])
-                    self._subprocess.wait()
-                    self._subprocess = None
-                    if os.path.exists(cifar_tgz) and os.path.getsize(cifar_tgz) == expected_size:
-                        downloaded_ok = True
-                        break
-                    if self._cancel_requested:
-                        return
-
-                if has_wget:
-                    self._emit("   Trying wget...")
-                    self._flush_logs()
-                    self._subprocess = subprocess.Popen([
-                        "wget", "-O", cifar_tgz, "--show-progress", url,
-                    ])
-                    self._subprocess.wait()
-                    self._subprocess = None
-                    if os.path.exists(cifar_tgz) and os.path.getsize(cifar_tgz) == expected_size:
-                        downloaded_ok = True
-                        break
-                    if self._cancel_requested:
-                        return
-
-                if has_curl:
-                    self._emit("   Trying curl...")
-                    self._flush_logs()
-                    self._subprocess = subprocess.Popen([
-                        "curl", "-#", "-Lo", cifar_tgz, url,
-                    ])
-                    self._subprocess.wait()
-                    self._subprocess = None
-                    if os.path.exists(cifar_tgz) and os.path.getsize(cifar_tgz) == expected_size:
-                        downloaded_ok = True
-                        break
-                    if self._cancel_requested:
-                        return
-
-            if not downloaded_ok:
-                import urllib.request
-                self._emit("   Trying Python (fallback)...")
-                self._flush_logs()
-                for url in cifar_urls:
-                    if self._cancel_requested:
-                        return
-                    try:
-                        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                        resp = urllib.request.urlopen(req)
-                        total = int(resp.headers.get("Content-Length", expected_size))
-                        downloaded, chunk = 0, 8192
-                        with open(cifar_tgz, "wb") as f:
-                            while True:
-                                if self._cancel_requested:
-                                    return
-                                data = resp.read(chunk)
-                                if not data:
-                                    break
-                                f.write(data)
-                                downloaded += len(data)
-                                if downloaded % (chunk * 200) == 0:
-                                    self._emit(f"   {min(downloaded/total*100,100):.0f}%")
-                        if os.path.getsize(cifar_tgz) == expected_size:
-                            downloaded_ok = True
-                            break
-                    except Exception as e:
-                        self._emit(f"   Error: {e}")
-                        continue
-
-            if downloaded_ok:
-                break
-
-        if not downloaded_ok:
-            self._emit("❌ All retries exhausted. Could not download from any server.")
-            self.status = "failed"
-            self._flush_logs()
-            return
-
-        md5_actual = hashlib.md5(open(cifar_tgz, "rb").read()).hexdigest()
-        if md5_actual != info["md5"]:
-            self._emit("⚠️  MD5 mismatch — file corrupted, will retry next time.")
-            os.remove(cifar_tgz)
-            self.status = "failed"
-            self._flush_logs()
-            return
-
-        self._emit("   Extracting...")
-        self._flush_logs()
-        with tarfile.open(cifar_tgz, "r:gz") as tar:
-            tar.extractall(path=ds_root)
-        self._emit("✅ CIFAR-10 ready!")
-        self._flush_logs()
+        self._subprocess = None
+        return result
 
     def _run(self) -> None:
         """Execute the full distillation pipeline."""
@@ -470,13 +260,15 @@ class TrainingTask:
                 if self.status not in ("cancelled", "failed"):
                     self.status = "cancelled" if self._cancel_requested else "failed"
                     self._flush_logs()
-                    _save_run({
-                        "id": self.id,
-                        "timestamp": datetime.now().isoformat(),
-                        "config": self.config,
-                        "status": self.status,
-                        "error": self.error,
-                    })
+                    _save_run(
+                        {
+                            "id": self.id,
+                            "timestamp": datetime.now().isoformat(),
+                            "config": self.config,
+                            "status": self.status,
+                            "error": self.error,
+                        }
+                    )
                 return
 
             train_loader, val_loader, num_classes, in_channels = result
@@ -495,7 +287,7 @@ class TrainingTask:
             self.progress = 0.18
             student_name = self.config.get("student", "MiniCNN")
             self._emit(f"🔧 Building student ({student_name})...")
-            student = build_student(
+            student = _get_cached_student(
                 teacher=teacher,
                 student_type=student_name,
                 compression_ratio=self.config.get("compression_ratio", 0.05),
@@ -505,16 +297,19 @@ class TrainingTask:
             student.to(DEVICE)
             student_params = sum(p.numel() for p in student.parameters())
             self._emit(f"   Student parameters: {student_params:,}")
-            self._emit(f"   Compression ratio: {student_params/teacher_params:.2%}")
+            self._emit(f"   Compression ratio: {student_params / teacher_params:.2%}")
             self._flush_logs()
 
             # --- Distillation ---
             self.progress = 0.25
-            self._emit(f"🔄 Distilling (T={self.config['temperature']}, α={self.config['alpha']})...\n")
+            self._emit(
+                f"🔄 Distilling (T={self.config['temperature']}, α={self.config['alpha']})...\n"
+            )
             self._flush_logs()
 
             distiller = Distiller(
-                teacher, student,
+                teacher,
+                student,
                 temperature=self.config["temperature"],
                 alpha=self.config["alpha"],
                 device=DEVICE,
@@ -526,9 +321,7 @@ class TrainingTask:
             os.makedirs(ckpt_dir, exist_ok=True)
 
             optimizer = torch.optim.Adam(student.parameters(), lr=1e-3)
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer, self.config["epochs"]
-            )
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, self.config["epochs"])
 
             start_epoch = 0
             # Resume from checkpoint if provided
@@ -552,6 +345,7 @@ class TrainingTask:
                     return
 
                 import time as _time
+
                 _epoch_start = _time.time()
 
                 # --- Train ---
@@ -582,6 +376,8 @@ class TrainingTask:
                 self.losses.append(avg_loss)
                 self.current_loss = avg_loss
 
+                self._dirty = True
+
                 # --- Validate ---
                 student.eval()
                 correct = total = 0
@@ -595,6 +391,8 @@ class TrainingTask:
                 acc = correct / total
                 self.accuracies.append(acc)
                 self.current_acc = acc
+
+                self._dirty = True
 
                 # --- Early stopping ---
                 patience = self.config.get("patience", 0)
@@ -620,7 +418,7 @@ class TrainingTask:
                 # --- Update state ---
                 self.current_epoch = epoch + 1
                 self._emit(
-                    f"Epoch {epoch+1}/{self.config['epochs']} — "
+                    f"Epoch {epoch + 1}/{self.config['epochs']} — "
                     f"Loss: {avg_loss:.4f} — Val Acc: {acc:.2%}"
                 )
 
@@ -633,15 +431,18 @@ class TrainingTask:
 
                 # --- Checkpoint ---
                 if ckpt_every > 0 and (epoch + 1) % ckpt_every == 0:
-                    ckpt_path = os.path.join(ckpt_dir, f"checkpoint_epoch_{epoch+1}.pt")
-                    torch.save({
-                        "epoch": epoch + 1,
-                        "model": student.state_dict(),
-                        "optimizer": optimizer.state_dict(),
-                        "losses": self.losses,
-                        "accuracies": self.accuracies,
-                        "config": self.config,
-                    }, ckpt_path)
+                    ckpt_path = os.path.join(ckpt_dir, f"checkpoint_epoch_{epoch + 1}.pt")
+                    torch.save(
+                        {
+                            "epoch": epoch + 1,
+                            "model": student.state_dict(),
+                            "optimizer": optimizer.state_dict(),
+                            "losses": self.losses,
+                            "accuracies": self.accuracies,
+                            "config": self.config,
+                        },
+                        ckpt_path,
+                    )
                     self._emit(f"   💾 Checkpoint saved: {ckpt_path}")
 
                 self._flush_logs()
@@ -649,6 +450,7 @@ class TrainingTask:
             # --- Benchmark ---
             self.progress = 0.90
             self._emit("\n📊 Benchmarking teacher vs. student (CPU)...")
+            self._flush_logs()
             comparison = compare_teacher_student(teacher, student, target="cpu")
             self._emit(
                 f"   Teacher: {comparison['teacher']['mean_ms']:.2f} ms  "
@@ -675,7 +477,7 @@ class TrainingTask:
                 "student_throughput": comparison["student"]["throughput_imgs_per_sec"],
                 "final_loss": round(self.losses[-1], 4),
                 "final_accuracy": round(self.accuracies[-1], 4),
-                "losses": [round(l, 4) for l in self.losses],
+                "losses": [round(loss_val, 4) for loss_val in self.losses],
                 "accuracies": [round(a, 4) for a in self.accuracies],
                 "dataset": self.config.get("dataset", "CIFAR-10"),
                 "teacher_name": self.config["teacher"],
@@ -702,16 +504,19 @@ class TrainingTask:
             self.status = "failed"
             self.error = str(e)
             import traceback
+
             tb = traceback.format_exc()
             self._emit(f"\n❌ Error: {e}")
             self._emit(tb)
-            _save_run({
-                "id": self.id,
-                "timestamp": datetime.now().isoformat(),
-                "config": self.config,
-                "status": "failed",
-                "error": str(e),
-            })
+            _save_run(
+                {
+                    "id": self.id,
+                    "timestamp": datetime.now().isoformat(),
+                    "config": self.config,
+                    "status": "failed",
+                    "error": str(e),
+                }
+            )
         finally:
             self._flush_logs()
 
@@ -719,6 +524,7 @@ class TrainingTask:
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -738,13 +544,68 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Enable gzip compression for all responses (including SSE streams)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 
 # ---- Routes ----
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    """Serve the main page."""
+    """Serve the main page (HTML) or API info (JSON) in API-only mode."""
+    if API_ONLY:
+        return JSONResponse(
+            {
+                "service": "DistilKit API",
+                "version": "0.1.0",
+                "docs": "/docs",
+                "openapi": "/openapi.json",
+                "endpoints": [
+                    {
+                        "path": "/api/config",
+                        "method": "GET",
+                        "description": "Available datasets, teachers, students",
+                    },
+                    {
+                        "path": "/api/train",
+                        "method": "POST",
+                        "description": "Start a new distillation task",
+                    },
+                    {
+                        "path": "/api/train/{task_id}",
+                        "method": "GET",
+                        "description": "Get task state",
+                    },
+                    {
+                        "path": "/api/train/{task_id}/stream",
+                        "method": "GET",
+                        "description": "SSE progress stream",
+                    },
+                    {
+                        "path": "/api/train/{task_id}/cancel",
+                        "method": "POST",
+                        "description": "Cancel a running task",
+                    },
+                    {
+                        "path": "/api/export/{task_id}",
+                        "method": "POST",
+                        "description": "Export trained model",
+                    },
+                    {
+                        "path": "/api/download/{filename}",
+                        "method": "GET",
+                        "description": "Download exported file",
+                    },
+                    {"path": "/api/tasks", "method": "GET", "description": "List all tasks"},
+                    {
+                        "path": "/api/history",
+                        "method": "GET",
+                        "description": "Completed training runs",
+                    },
+                ],
+            }
+        )
     html = TEMPLATE_FILE.read_text(encoding="utf-8")
     return HTMLResponse(html)
 
@@ -764,12 +625,12 @@ async def start_training(body: dict):
         "batch_size": int(body.get("batch_size", 64)),
     }
 
-    if config["dataset"] not in DATASETS:
-        raise HTTPException(400, f"Invalid dataset. Choose: {DATASET_CHOICES}")
-    if config["teacher"] not in TEACHER_CHOICES:
-        raise HTTPException(400, f"Invalid teacher. Choose: {TEACHER_CHOICES}")
-    if config["student"] not in STUDENT_CHOICES:
-        raise HTTPException(400, f"Invalid student. Choose: {STUDENT_CHOICES}")
+    if config["dataset"] not in ds.DATASETS:
+        raise HTTPException(400, f"Invalid dataset. Choose: {ds.DATASET_CHOICES}")
+    if config["teacher"] not in ds.TEACHER_CHOICES:
+        raise HTTPException(400, f"Invalid teacher. Choose: {ds.TEACHER_CHOICES}")
+    if config["student"] not in ds.STUDENT_CHOICES:
+        raise HTTPException(400, f"Invalid student. Choose: {ds.STUDENT_CHOICES}")
 
     task = TrainingTask(config)
     _tasks[task.id] = task
@@ -786,9 +647,16 @@ async def stream_progress(task_id: str):
         raise HTTPException(404, "Task not found")
 
     async def event_generator() -> AsyncGenerator[str, None]:
+        """Yield SSE events with progress, logs, and results."""
         last_logs_len = 0
 
         while task.status in ("pending", "running"):
+            # Only send data when something changed (dirty flag)
+            if not task._dirty:
+                await asyncio.sleep(0.5)
+                continue
+
+            task._dirty = False
             new_logs = task.logs[last_logs_len:]
             last_logs_len = len(task.logs)
 
@@ -818,7 +686,7 @@ async def stream_progress(task_id: str):
                 yield f"event: error\ndata: {json.dumps(data)}\n\n"
                 return
 
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.1)
 
         # Send final status one more time
         if task.status == "completed" and task.result:
@@ -894,12 +762,25 @@ async def export_model(task_id: str, body: dict):
 
 @app.get("/api/config")
 async def get_config():
-    """Return app configuration (teachers list, device)."""
+    """Return app configuration (teachers list, device, cache status)."""
+    # Check torch hub cache for each teacher model
+    cache_dir = os.path.expanduser("~/.cache/torch/hub/checkpoints")
+    cached_models: dict[str, bool] = {}
+    if os.path.isdir(cache_dir):
+        cached_files = set(os.listdir(cache_dir))
+        for model in ds.TEACHER_CHOICES:
+            # Check if any cached file starts with the model name
+            cached_models[model] = any(f.startswith(model) for f in cached_files)
+    else:
+        for model in ds.TEACHER_CHOICES:
+            cached_models[model] = False
+
     return {
-        "datasets": DATASET_CHOICES,
-        "teachers": TEACHER_CHOICES,
-        "students": STUDENT_CHOICES,
+        "datasets": ds.DATASET_CHOICES,
+        "teachers": ds.TEACHER_CHOICES,
+        "students": ds.STUDENT_CHOICES,
         "device": DEVICE,
+        "cached_teachers": cached_models,
     }
 
 
@@ -913,9 +794,6 @@ async def cancel_training(task_id: str):
         raise HTTPException(400, f"Task is already {task.status}")
     task.cancel()
     return {"status": "cancelled"}
-
-
-
 
 
 @app.get("/api/history")
@@ -936,9 +814,7 @@ async def download_file(filename: str):
         safe_path,
         media_type="application/octet-stream",
         filename=filename,
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        },
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -964,12 +840,25 @@ async def list_tasks():
 # Entry point
 # ---------------------------------------------------------------------------
 
-def launch(port: int = 7860, host: str = "127.0.0.1") -> None:
-    """Launch the web GUI server."""
+
+def launch(port: int = 7860, host: str = "127.0.0.1", api_only: bool = False) -> None:
+    """Launch the web server.
+
+    Args:
+        port: Server port.
+        host: Bind address.
+        api_only: If True, only expose the REST API (no frontend).
+    """
     import uvicorn
-    logger.info(f"⚡ DistilKit Web GUI")
+
+    global API_ONLY
+    if api_only:
+        API_ONLY = True
+
+    mode = "API-only" if API_ONLY else "Web GUI"
+    logger.info(f"⚡ DistilKit {mode}")
     logger.info(f"   → http://{host}:{port}")
-    logger.info(f"   → Press Ctrl+C to stop\n")
+    logger.info("   → Press Ctrl+C to stop\n")
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
 

@@ -35,9 +35,7 @@ def load_teacher(model_name: str, num_classes: int = 10, pretrained: bool = True
     }
 
     if model_name not in model_registry:
-        raise ValueError(
-            f"Unknown model: {model_name}. Available: {list(model_registry.keys())}"
-        )
+        raise ValueError(f"Unknown model: {model_name}. Available: {list(model_registry.keys())}")
 
     model_fn = model_registry[model_name]
 

@@ -1,16 +1,19 @@
 """Tests for the web GUI API."""
 
-import json
 import os
 import tempfile
 
-import pytest
 from fastapi.testclient import TestClient
 
 # We need to set up the environment before importing the app
 os.environ["DEVICE"] = "cpu"
 
-from src.webapp import app, _load_history, _save_run, DATASET_CHOICES, TEACHER_CHOICES, STUDENT_CHOICES
+from src import datasets as ds
+from src.webapp import _load_history, _save_run, app
+
+DATASET_CHOICES = ds.DATASET_CHOICES
+TEACHER_CHOICES = ds.TEACHER_CHOICES
+STUDENT_CHOICES = ds.STUDENT_CHOICES
 
 client = TestClient(app)
 
@@ -23,6 +26,7 @@ class TestHistory:
         with tempfile.TemporaryDirectory() as tmpdir:
             original = "runs"
             import src.webapp
+
             src.webapp.RUNS_DIR = tmpdir
             try:
                 history = _load_history()
@@ -34,6 +38,7 @@ class TestHistory:
         """_save_run should persist and _load_history should retrieve."""
         with tempfile.TemporaryDirectory() as tmpdir:
             import src.webapp
+
             original = src.webapp.RUNS_DIR
             src.webapp.RUNS_DIR = tmpdir
             try:
@@ -50,6 +55,7 @@ class TestHistory:
         """Corrupted JSON files should be skipped during load."""
         with tempfile.TemporaryDirectory() as tmpdir:
             import src.webapp
+
             original = src.webapp.RUNS_DIR
             src.webapp.RUNS_DIR = tmpdir
             try:
@@ -90,42 +96,54 @@ class TestAPI:
 
     def test_train_invalid_dataset(self):
         """POST /api/train with invalid dataset should return 400."""
-        response = client.post("/api/train", json={
-            "dataset": "InvalidDataset",
-            "teacher": "resnet18",
-            "epochs": 1,
-        })
+        response = client.post(
+            "/api/train",
+            json={
+                "dataset": "InvalidDataset",
+                "teacher": "resnet18",
+                "epochs": 1,
+            },
+        )
         assert response.status_code == 400
         assert "Invalid dataset" in response.json()["detail"]
 
     def test_train_invalid_teacher(self):
         """POST /api/train with invalid teacher should return 400."""
-        response = client.post("/api/train", json={
-            "dataset": "CIFAR-10",
-            "teacher": "invalid_model",
-            "epochs": 1,
-        })
+        response = client.post(
+            "/api/train",
+            json={
+                "dataset": "CIFAR-10",
+                "teacher": "invalid_model",
+                "epochs": 1,
+            },
+        )
         assert response.status_code == 400
         assert "Invalid teacher" in response.json()["detail"]
 
     def test_train_invalid_student(self):
         """POST /api/train with invalid student should return 400."""
-        response = client.post("/api/train", json={
-            "dataset": "CIFAR-10",
-            "teacher": "resnet18",
-            "student": "InvalidStudent",
-            "epochs": 1,
-        })
+        response = client.post(
+            "/api/train",
+            json={
+                "dataset": "CIFAR-10",
+                "teacher": "resnet18",
+                "student": "InvalidStudent",
+                "epochs": 1,
+            },
+        )
         assert response.status_code == 400
         assert "Invalid student" in response.json()["detail"]
 
     def test_train_minimal_config(self):
         """POST /api/train with minimal config should create a task."""
-        response = client.post("/api/train", json={
-            "dataset": "CIFAR-10",
-            "teacher": "resnet18",
-            "epochs": 1,
-        })
+        response = client.post(
+            "/api/train",
+            json={
+                "dataset": "CIFAR-10",
+                "teacher": "resnet18",
+                "epochs": 1,
+            },
+        )
         assert response.status_code == 200
         data = response.json()
         assert "task_id" in data
@@ -133,16 +151,19 @@ class TestAPI:
 
     def test_train_full_config(self):
         """POST /api/train with full config should create a task."""
-        response = client.post("/api/train", json={
-            "dataset": "MNIST",
-            "teacher": "mobilenet_v2",
-            "student": "MiniResNet",
-            "epochs": 2,
-            "temperature": 3.0,
-            "alpha": 0.5,
-            "patience": 2,
-            "batch_size": 32,
-        })
+        response = client.post(
+            "/api/train",
+            json={
+                "dataset": "MNIST",
+                "teacher": "mobilenet_v2",
+                "student": "MiniResNet",
+                "epochs": 2,
+                "temperature": 3.0,
+                "alpha": 0.5,
+                "patience": 2,
+                "batch_size": 32,
+            },
+        )
         assert response.status_code == 200
         data = response.json()
         assert "task_id" in data
@@ -150,11 +171,14 @@ class TestAPI:
     def test_tasks_endpoint(self):
         """GET /api/tasks should return a list."""
         # First create a task
-        client.post("/api/train", json={
-            "dataset": "CIFAR-10",
-            "teacher": "resnet18",
-            "epochs": 1,
-        })
+        client.post(
+            "/api/train",
+            json={
+                "dataset": "CIFAR-10",
+                "teacher": "resnet18",
+                "epochs": 1,
+            },
+        )
         response = client.get("/api/tasks")
         assert response.status_code == 200
         tasks = response.json()

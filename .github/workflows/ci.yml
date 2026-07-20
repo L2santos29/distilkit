@@ -4,7 +4,8 @@
 # Runs on every push to any branch and on pull requests to main.
 # - Installs CPU-only PyTorch for fast dependency resolution
 # - Caches pip downloads to speed up subsequent runs
-# - Runs the full test suite with pytest
+# - Runs the full test suite with coverage
+# - Audits dependencies for known vulnerabilities
 # - Reports results in a concise, human-readable format
 # =============================================================================
 
@@ -61,7 +62,7 @@ jobs:
           # Install CPU-only PyTorch first (no CUDA needed)
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
-          pip install pytest
+          pip install pytest pytest-cov
 
       - name: Lint with ruff
         run: |
@@ -70,9 +71,9 @@ jobs:
         continue-on-error: true
         timeout-minutes: 2
 
-      - name: Run tests
+      - name: Run tests with coverage
         run: |
-          python -m pytest tests/ -v --tb=short --no-header 2>&1
+          python -m pytest tests/ --cov=src --cov-report=term --cov-report=term-missing 2>&1
 
       - name: Verify CLI starts
         run: |
@@ -80,3 +81,10 @@ jobs:
           python -m src.cli train --help
           python -m src.cli gui --help
           python -m src.cli api --help
+
+      - name: Audit dependencies for vulnerabilities
+        run: |
+          pip install pip-audit
+          pip-audit --strict --desc on 2>&1
+        continue-on-error: true
+        timeout-minutes: 5

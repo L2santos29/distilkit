@@ -53,7 +53,6 @@ class MiniCNN(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass through feature extractor and classifier."""
         x = self.features(x)
         x = self.classifier(x)
         return x
@@ -91,7 +90,6 @@ class MiniResNet(nn.Module):
         self.classifier = nn.Linear(c2, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass through residual feature extractor and classifier."""
         x = self.features(x)
         x = x.view(x.size(0), -1)
         x = self.classifier(x)
@@ -116,7 +114,6 @@ class ResidualBlock(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass with skip-connection."""
         identity = x
         out = self.conv1(x)
         out = self.bn1(out)

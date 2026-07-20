@@ -9,6 +9,8 @@ where:
     T (temperature) = softness of probability distributions
 """
 
+from collections.abc import Callable
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -95,6 +97,16 @@ class Distiller:
         val_loader: DataLoader | None = None,
         epochs: int = 10,
         lr: float = 1e-3,
+        optimizer: torch.optim.Optimizer | None = None,
+        scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
+        patience: int = 0,
+        start_epoch: int = 0,
+        initial_history: dict[str, list[float]] | None = None,
+        *,
+        on_epoch_end: "Callable[[int, int, float, float | None], None] | None" = None,
+        on_batch_end: "Callable[[int, int, int, int, float], None] | None" = None,
+        ckpt_callback: "Callable[[int, dict], None] | None" = None,
+        cancel_flag: "Callable[[], bool] | None" = None,
     ) -> dict[str, list[float]]:
         """Run knowledge distillation training.
 
@@ -102,20 +114,47 @@ class Distiller:
             train_loader: Training data loader.
             val_loader: Optional validation data loader.
             epochs: Number of training epochs.
-            lr: Learning rate.
+            lr: Learning rate (used only when *optimizer* is not provided).
+            optimizer: Optional pre-created optimizer. If ``None``, creates Adam.
+            scheduler: Optional pre-created scheduler. If ``None``, creates
+                ``CosineAnnealingLR``.
+            patience: Early-stopping patience (0 = disabled).
+            start_epoch: Starting epoch index (for resuming).
+            initial_history: Previous training history to extend (for resuming).
+            on_epoch_end: Called after each epoch with
+                ``(epoch, total, avg_loss, acc)``.
+            on_batch_end: Called after each batch with
+                ``(epoch, total_epochs, batch_idx, total_batches, loss)``.
+            ckpt_callback: Called every epoch with ``(epoch, checkpoint_dict)``.
+                The dict contains ``"model"``, ``"optimizer"``, ``"losses"``,
+                ``"accuracies"`` and ``"epoch"`` keys.
+            cancel_flag: Callable that returns ``True`` to stop training.
 
         Returns:
-            Training history dict with 'train_loss' and 'val_acc' lists.
+            Training history dict with ``'train_loss'`` and ``'val_acc'`` lists.
         """
-        optimizer = torch.optim.Adam(self.student.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
-        history = {"train_loss": [], "val_acc": []}
+        opt = optimizer or torch.optim.Adam(self.student.parameters(), lr=lr)
+        sched = scheduler or torch.optim.lr_scheduler.CosineAnnealingLR(opt, epochs)
 
-        for epoch in range(epochs):
-            # Training
+        history: dict[str, list[float]] = {
+            "train_loss": list(initial_history.get("train_loss", []) if initial_history else []),
+            "val_acc": list(initial_history.get("val_acc", []) if initial_history else []),
+        }
+
+        best_acc = 0.0
+        patience_counter = 0
+
+        for epoch in range(start_epoch, epochs):
+            if cancel_flag and cancel_flag():
+                logger.info("Training cancelled.")
+                break
+
+            # --- Training ---
             self.student.train()
             epoch_loss = 0.0
-            for images, labels in train_loader:
+            num_batches = len(train_loader)
+
+            for batch_idx, (images, labels) in enumerate(train_loader):
                 images, labels = images.to(self.device), labels.to(self.device)
 
                 with torch.no_grad():
@@ -124,26 +163,57 @@ class Distiller:
                 student_logits = self.student(images)
                 loss = self.criterion(student_logits, teacher_logits, labels)
 
-                optimizer.zero_grad()
+                opt.zero_grad()
                 loss.backward()
-                optimizer.step()
+                opt.step()
 
                 epoch_loss += loss.item()
 
-            avg_loss = epoch_loss / len(train_loader)
+                if on_batch_end:
+                    on_batch_end(epoch, epochs, batch_idx, num_batches, loss.item())
+
+            avg_loss = epoch_loss / num_batches
             history["train_loss"].append(avg_loss)
 
-            # Validation
+            # --- Validation ---
+            acc = None
             if val_loader:
                 acc = self._evaluate(val_loader)
                 history["val_acc"].append(acc)
 
-            scheduler.step()
+            sched.step()
+
+            # --- Early stopping ---
+            if patience > 0 and acc is not None:
+                if acc > best_acc + 0.001:
+                    best_acc = acc
+                    patience_counter = 0
+                else:
+                    patience_counter += 1
+                    if patience_counter >= patience:
+                        logger.info(f"   ⏹️ Early stopping (best: {best_acc:.2%})")
+                        break
 
             logger.info(
                 f"Epoch {epoch + 1}/{epochs} — "
-                f"Loss: {avg_loss:.4f}" + (f" — Val Acc: {acc:.2%}" if val_loader else "")
+                f"Loss: {avg_loss:.4f}" + (f" — Val Acc: {acc:.2%}" if acc is not None else "")
             )
+
+            if on_epoch_end:
+                on_epoch_end(epoch, epochs, avg_loss, acc)
+
+            # --- Checkpoint ---
+            if ckpt_callback:
+                ckpt_callback(
+                    epoch + 1,
+                    {
+                        "epoch": epoch + 1,
+                        "model": self.student.state_dict(),
+                        "optimizer": opt.state_dict(),
+                        "losses": history["train_loss"],
+                        "accuracies": history["val_acc"],
+                    },
+                )
 
         return history
 

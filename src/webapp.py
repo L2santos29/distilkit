@@ -6,524 +6,72 @@ Run with:
 """
 
 import asyncio
-import io
 import json
 import os
-import subprocess
-import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
 from pathlib import Path
 from typing import AsyncGenerator
 
-import torch
-import torch.nn as nn
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
 from src import datasets as ds
-from src.benchmarks import compare_teacher_student
-from src.distiller import Distiller
-from src.log_config import logger
+from src.log_config import logger, set_request_id
 from src.onnx_export import export_to_onnx, export_to_torchscript
-from src.student import build_student, STUDENT_REGISTRY
-from src.teacher import load_teacher
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-DEVICE = "cpu"
-
-# Maximum size of the training log buffer (in characters).
-# Older entries are trimmed to prevent UI slowdown on long runs.
-MAX_LOG_SIZE = 100_000
-
-# ---------------------------------------------------------------------------
-# API-only mode (no frontend)
-# ---------------------------------------------------------------------------
-
-API_ONLY = os.environ.get("API_ONLY", "").lower() in ("1", "true", "yes")
-
-# ---------------------------------------------------------------------------
-# HTML template (served as static file)
-# ---------------------------------------------------------------------------
+from src.settings import settings
+from src.task_manager import TrainingTask, _history, _save_run, _tasks, get_history_store, get_tasks
 
 HERE = Path(__file__).parent
 TEMPLATE_FILE = HERE / "templates" / "index.html"
 
-# ---------------------------------------------------------------------------
-# Run history (persisted to runs/ directory)
-# ---------------------------------------------------------------------------
+# Server start time for uptime metric
+_start_time: float = time.time()
 
-RUNS_DIR = "runs"
-
-# ---------------------------------------------------------------------------
-# Student model cache
-# ---------------------------------------------------------------------------
-
-_student_cache: dict[str, nn.Module] = {}
-
-
-def _get_cached_student(
-    teacher: nn.Module,
-    student_type: str,
-    compression_ratio: float,
-    num_classes: int,
-    in_channels: int,
-) -> nn.Module:
-    """Build and cache a student, or deep-copy a cached one."""
-    import copy
-    teacher_params = sum(p.numel() for p in teacher.parameters())
-    key = f"{student_type}:{compression_ratio}:{num_classes}:{in_channels}:{teacher_params}"
-    if key not in _student_cache:
-        _student_cache[key] = build_student(
-            teacher=teacher,
-            student_type=student_type,
-            compression_ratio=compression_ratio,
-            num_classes=num_classes,
-            in_channels=in_channels,
-        )
-    return copy.deepcopy(_student_cache[key])
-
-# ---------------------------------------------------------------------------
-# Student model cache: avoids rebuilding the same architecture repeatedly.
-# Keyed by (student_type, compression_ratio, num_classes, in_channels).
-# ---------------------------------------------------------------------------
-
-_student_cache: dict[tuple, nn.Module] = {}
+# Request-level metrics (reset on restart)
+_metrics: dict = {
+    "requests_total": 0,
+    "requests_by_path": {},
+    "errors_total": 0,
+    "duration_total_sec": 0.0,
+}
 
 
-def _get_student(
-    student_type: str,
-    compression_ratio: float,
-    num_classes: int,
-    in_channels: int,
-) -> nn.Module:
-    """Return a cloned student model from cache, or build + cache a new one."""
-    key = (student_type, compression_ratio, num_classes, in_channels)
-    if key not in _student_cache:
-        # Build a temporary teacher to compute compression ratio
-        _student_cache[key] = STUDENT_REGISTRY[student_type](
-            in_channels=in_channels, num_classes=num_classes, width=1.0
-        )
-    # Always return a fresh copy (deep copy the state dict into a new instance)
-    base = STUDENT_REGISTRY[student_type](
-        in_channels=in_channels, num_classes=num_classes,
-        width=_compute_width(_student_cache[key], compression_ratio),
-    )
-    return base
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """Assign a unique request ID and track request metrics."""
 
+    async def dispatch(self, request: Request, call_next):
+        rid = request.headers.get("X-Request-ID", uuid.uuid4().hex[:12])
+        set_request_id(rid)
+        path = request.url.path
+        logger.bind(request_id=rid).info(f"→ {request.method} {path}")
 
-def _compute_width(base_model: nn.Module, compression_ratio: float) -> float:
-    """Estimate the width multiplier for a target compression ratio."""
-    base_params = sum(p.numel() for p in base_model.parameters())
-    if base_params == 0 or compression_ratio <= 0:
-        return 1.0
-    # Params scale roughly with width^2 → width ≈ sqrt(ratio * teacher_params / base_params)
-    # Since we don't have teacher_params here, use compression_ratio directly
-    return max(0.125, min(4.0, compression_ratio ** 0.5))
-
-
-def _load_history() -> list[dict]:
-    """Load completed runs from disk."""
-    history = []
-    if not os.path.isdir(RUNS_DIR):
-        return history
-    for fname in sorted(os.listdir(RUNS_DIR), reverse=True):
-        if fname.endswith(".json"):
-            try:
-                with open(os.path.join(RUNS_DIR, fname)) as f:
-                    history.append(json.load(f))
-            except Exception:
-                pass
-    return history
-
-
-def _save_run(run_data: dict) -> None:
-    """Persist a completed run to disk."""
-    os.makedirs(RUNS_DIR, exist_ok=True)
-    fname = f"{run_data['id']}.json"
-    with open(os.path.join(RUNS_DIR, fname), "w") as f:
-        json.dump(run_data, f, indent=2, default=str)
-
-
-# ---------------------------------------------------------------------------
-# Training task manager
-# ---------------------------------------------------------------------------
-
-_tasks: dict[str, "TrainingTask"] = {}
-_history: list[dict] = _load_history()
-
-
-class TrainingTask:
-    """Background training task with progress tracking."""
-
-    def __init__(self, config: dict) -> None:
-        """Initialize a training task with the given configuration.
-
-        Args:
-            config: Training parameters (dataset, teacher, epochs, etc.).
-        """
-        self.id = uuid.uuid4().hex[:12]
-        self.config = config
-        self.status = "pending"  # pending → running → completed | failed
-        self.progress = 0.0  # 0.0 – 1.0
-        self.current_epoch = 0
-        self.total_epochs = config["epochs"]
-        self.current_loss: float | None = None
-        self.current_acc: float | None = None
-        self.losses: list[float] = []
-        self.accuracies: list[float] = []
-        self.logs = ""
-        self.result: dict | None = None
-        self.error: str | None = None
-        self.student: nn.Module | None = None
-        self._thread: threading.Thread | None = None
-        self._log_buffer = io.StringIO()
-        self._cancel_requested = False
-        self._subprocess: subprocess.Popen | None = None
-        self.eta_seconds: float = 0.0
-        self._epoch_times: list[float] = []
-        self.created_at = datetime.now()
-        self._dirty = False
-
-    def cancel(self) -> None:
-        """Cancel a running training task."""
-        self._cancel_requested = True
-        # Kill subprocess (wget/curl) if running
-        if self._subprocess and self._subprocess.poll() is None:
-            self._subprocess.terminate()
-            try:
-                self._subprocess.wait(timeout=5)
-            except Exception:
-                self._subprocess.kill()
-        self.status = "cancelled"
-        self._emit("\n⛔ Training cancelled.")
-        self._flush_logs()
-
-    def start(self) -> None:
-        """Start the training task in a background thread."""
-        self.status = "running"
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    def _emit(self, msg: str) -> None:
-        """Write to both logging and the task log buffer."""
-        logger.info(msg)
-        self._log_buffer.write(msg + "\n")
-        self._dirty = True
-
-    def _flush_logs(self) -> None:
-        """Transfer accumulated buffer to the logs string, capping total size."""
-        self.logs += self._log_buffer.getvalue()
-        self._log_buffer.truncate(0)
-        self._log_buffer.seek(0)
-        # Trim oldest logs if over the limit
-        if len(self.logs) > MAX_LOG_SIZE:
-            self.logs = self.logs[-MAX_LOG_SIZE:]
-
-    def _prepare_dataset(self, dataset_name: str, data_root: str) -> tuple | None:
-        """Delegate to ``datasets.get_dataset_loaders`` with cancel support."""
-        subprocess_tracker: list = []
-        self._subprocess = subprocess_tracker
-
-        def cancel_flag() -> bool:
-            return self._cancel_requested
-
-        result = ds.get_dataset_loaders(
-            dataset_name,
-            self.config["batch_size"],
-            data_root,
-            cancel_flag=cancel_flag,
-            subprocess_tracker=subprocess_tracker,
-        )
-        self._subprocess = None
-        return result
-
-    def _run(self) -> None:
-        """Execute the full distillation pipeline."""
+        start = time.perf_counter()
         try:
-            # --- Data ---
-            dataset_name = self.config.get("dataset", "CIFAR-10")
-            self.progress = 0.02
-            self._emit(f"📦 Preparing {dataset_name}...")
+            response = await call_next(request)
+        except Exception:
+            _metrics["errors_total"] += 1
+            _metrics["requests_total"] += 1
+            _metrics["requests_by_path"].setdefault(path, 0)
+            _metrics["requests_by_path"][path] += 1
+            set_request_id("")
+            raise
 
-            result = self._prepare_dataset(dataset_name, "./data")
-            if result is None:
-                if self._cancel_requested:
-                    self._emit("⛔ Cancelled.")
-                else:
-                    self._emit("❌ Dataset preparation failed.")
-                if self.status not in ("cancelled", "failed"):
-                    self.status = "cancelled" if self._cancel_requested else "failed"
-                    self._flush_logs()
-                    _save_run(
-                        {
-                            "id": self.id,
-                            "timestamp": datetime.now().isoformat(),
-                            "config": self.config,
-                            "status": self.status,
-                            "error": self.error,
-                        }
-                    )
-                return
+        duration = time.perf_counter() - start
+        _metrics["requests_total"] += 1
+        _metrics["requests_by_path"].setdefault(path, 0)
+        _metrics["requests_by_path"][path] += 1
+        _metrics["duration_total_sec"] += duration
 
-            train_loader, val_loader, num_classes, in_channels = result
-            self._flush_logs()
+        if response.status_code >= 500:
+            _metrics["errors_total"] += 1
 
-            # --- Teacher ---
-            self.progress = 0.10
-            self._emit(f"🧠 Loading teacher ({self.config['teacher']})...")
-            teacher = load_teacher(self.config["teacher"], num_classes=num_classes)
-            teacher.to(DEVICE).eval()
-            teacher_params = sum(p.numel() for p in teacher.parameters())
-            self._emit(f"   Teacher parameters: {teacher_params:,}")
-            self._flush_logs()
-
-            # --- Student ---
-            self.progress = 0.18
-            student_name = self.config.get("student", "MiniCNN")
-            self._emit(f"🔧 Building student ({student_name})...")
-            student = _get_cached_student(
-                teacher=teacher,
-                student_type=student_name,
-                compression_ratio=self.config.get("compression_ratio", 0.05),
-                num_classes=num_classes,
-                in_channels=in_channels,
-            )
-            student.to(DEVICE)
-            student_params = sum(p.numel() for p in student.parameters())
-            self._emit(f"   Student parameters: {student_params:,}")
-            self._emit(f"   Compression ratio: {student_params / teacher_params:.2%}")
-            self._flush_logs()
-
-            # --- Distillation ---
-            self.progress = 0.25
-            self._emit(
-                f"🔄 Distilling (T={self.config['temperature']}, α={self.config['alpha']})...\n"
-            )
-            self._flush_logs()
-
-            distiller = Distiller(
-                teacher,
-                student,
-                temperature=self.config["temperature"],
-                alpha=self.config["alpha"],
-                device=DEVICE,
-            )
-
-            # ── Checkpoint directory ──
-            ckpt_dir = "checkpoints"
-            ckpt_every = self.config.get("ckpt_every", 5)
-            os.makedirs(ckpt_dir, exist_ok=True)
-
-            optimizer = torch.optim.Adam(student.parameters(), lr=1e-3)
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, self.config["epochs"])
-
-            start_epoch = 0
-            # Resume from checkpoint if provided
-            resume_from = self.config.get("resume")
-            if resume_from and os.path.exists(resume_from):
-                self._emit(f"📂 Resuming from checkpoint: {resume_from}")
-                self._flush_logs()
-                ckpt = torch.load(resume_from, map_location=DEVICE, weights_only=False)
-                student.load_state_dict(ckpt["model"])
-                optimizer.load_state_dict(ckpt["optimizer"])
-                start_epoch = ckpt["epoch"]
-                self.losses = ckpt.get("losses", [])
-                self.accuracies = ckpt.get("accuracies", [])
-                self._emit(f"   Resumed at epoch {start_epoch}/{self.config['epochs']}")
-                self._flush_logs()
-
-            for epoch in range(start_epoch, self.config["epochs"]):
-                if self._cancel_requested:
-                    self._emit("\n⛔ Training cancelled during epoch.")
-                    self._flush_logs()
-                    return
-
-                import time as _time
-
-                _epoch_start = _time.time()
-
-                # --- Train ---
-                student.train()
-                epoch_loss = 0.0
-                num_batches = len(train_loader)
-
-                for batch_idx, (images, labels) in enumerate(train_loader):
-                    images, labels = images.to(DEVICE), labels.to(DEVICE)
-
-                    with torch.no_grad():
-                        teacher_logits = teacher(images)
-
-                    student_logits = student(images)
-                    loss = distiller.criterion(student_logits, teacher_logits, labels)
-
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
-
-                    epoch_loss += loss.item()
-
-                    # Sub-epoch progress (within the 25-75% range)
-                    sub_progress = (batch_idx + 1) / num_batches
-                    self.progress = 0.25 + 0.50 * (epoch + sub_progress) / self.config["epochs"]
-
-                avg_loss = epoch_loss / num_batches
-                self.losses.append(avg_loss)
-                self.current_loss = avg_loss
-
-                self._dirty = True
-
-                # --- Validate ---
-                student.eval()
-                correct = total = 0
-                with torch.no_grad():
-                    for images, labels in val_loader:
-                        images, labels = images.to(DEVICE), labels.to(DEVICE)
-                        outputs = student(images)
-                        _, predicted = outputs.max(1)
-                        total += labels.size(0)
-                        correct += predicted.eq(labels).sum().item()
-                acc = correct / total
-                self.accuracies.append(acc)
-                self.current_acc = acc
-
-                self._dirty = True
-
-                # --- Early stopping ---
-                patience = self.config.get("patience", 0)
-                if patience > 0:
-                    if not hasattr(self, "_best_acc"):
-                        self._best_acc = 0.0
-                        self._patience_counter = 0
-                    if acc > self._best_acc + 0.001:
-                        self._best_acc = acc
-                        self._patience_counter = 0
-                    else:
-                        self._patience_counter += 1
-                        if self._patience_counter >= patience:
-                            self._emit(
-                                f"   ⏹️ Early stopping (no improvement for {patience} epochs, "
-                                f"best: {self._best_acc:.2%})"
-                            )
-                            self._flush_logs()
-                            break
-
-                scheduler.step()
-
-                # --- Update state ---
-                self.current_epoch = epoch + 1
-                self._emit(
-                    f"Epoch {epoch + 1}/{self.config['epochs']} — "
-                    f"Loss: {avg_loss:.4f} — Val Acc: {acc:.2%}"
-                )
-
-                # --- ETA ---
-                _elapsed = _time.time() - _epoch_start
-                self._epoch_times.append(_elapsed)
-                avg_epoch = sum(self._epoch_times) / len(self._epoch_times)
-                remaining = self.config["epochs"] - (epoch + 1)
-                self.eta_seconds = avg_epoch * remaining
-
-                # --- Checkpoint ---
-                if ckpt_every > 0 and (epoch + 1) % ckpt_every == 0:
-                    ckpt_path = os.path.join(ckpt_dir, f"checkpoint_epoch_{epoch + 1}.pt")
-                    torch.save(
-                        {
-                            "epoch": epoch + 1,
-                            "model": student.state_dict(),
-                            "optimizer": optimizer.state_dict(),
-                            "losses": self.losses,
-                            "accuracies": self.accuracies,
-                            "config": self.config,
-                        },
-                        ckpt_path,
-                    )
-                    self._emit(f"   💾 Checkpoint saved: {ckpt_path}")
-
-                self._flush_logs()
-
-            # --- Benchmark ---
-            self.progress = 0.90
-            self._emit("\n📊 Benchmarking teacher vs. student (CPU)...")
-            self._flush_logs()
-            comparison = compare_teacher_student(teacher, student, target="cpu")
-            self._emit(
-                f"   Teacher: {comparison['teacher']['mean_ms']:.2f} ms  "
-                f"({comparison['teacher']['throughput_imgs_per_sec']:.0f} img/s)"
-            )
-            self._emit(
-                f"   Student: {comparison['student']['mean_ms']:.2f} ms  "
-                f"({comparison['student']['throughput_imgs_per_sec']:.0f} img/s)"
-            )
-            self._emit(f"   ⚡ Speedup: {comparison['speedup']}x")
-            self._emit(f"   📦 Size: {comparison['compression']:.2%} of teacher")
-            self._flush_logs()
-
-            # --- Build result ---
-            self.progress = 0.95
-            self.result = {
-                "teacher_params": teacher_params,
-                "student_params": student_params,
-                "compression_pct": round((1 - student_params / teacher_params) * 100, 1),
-                "speedup": comparison["speedup"],
-                "teacher_latency_ms": comparison["teacher"]["mean_ms"],
-                "student_latency_ms": comparison["student"]["mean_ms"],
-                "teacher_throughput": comparison["teacher"]["throughput_imgs_per_sec"],
-                "student_throughput": comparison["student"]["throughput_imgs_per_sec"],
-                "final_loss": round(self.losses[-1], 4),
-                "final_accuracy": round(self.accuracies[-1], 4),
-                "losses": [round(loss_val, 4) for loss_val in self.losses],
-                "accuracies": [round(a, 4) for a in self.accuracies],
-                "dataset": self.config.get("dataset", "CIFAR-10"),
-                "teacher_name": self.config["teacher"],
-                "student_name": self.config.get("student", "MiniCNN"),
-            }
-
-            self.student = student
-            self.status = "completed"
-            self.progress = 1.0
-            self._emit("\n✅ Training complete!")
-            self._flush_logs()
-
-            # Persist to history
-            run = {
-                "id": self.id,
-                "timestamp": datetime.now().isoformat(),
-                "config": self.config,
-                "result": self.result,
-            }
-            _save_run(run)
-            _history.insert(0, run)
-
-        except Exception as e:
-            self.status = "failed"
-            self.error = str(e)
-            import traceback
-
-            tb = traceback.format_exc()
-            self._emit(f"\n❌ Error: {e}")
-            self._emit(tb)
-            _save_run(
-                {
-                    "id": self.id,
-                    "timestamp": datetime.now().isoformat(),
-                    "config": self.config,
-                    "status": "failed",
-                    "error": str(e),
-                }
-            )
-        finally:
-            self._flush_logs()
-
-
-# ---------------------------------------------------------------------------
-# FastAPI app
-# ---------------------------------------------------------------------------
+        response.headers["X-Request-ID"] = rid
+        set_request_id("")
+        return response
 
 
 @asynccontextmanager
@@ -547,14 +95,66 @@ app = FastAPI(
 # Enable gzip compression for all responses (including SSE streams)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+# Add request ID middleware (must be after GZip to log original request)
+app.add_middleware(RequestIDMiddleware)
 
-# ---- Routes ----
+
+@app.get("/health")
+@app.get("/ready")
+@app.get("/live")
+async def health():
+    """Health, readiness, and liveness endpoints for orchestration platforms."""
+    return {
+        "status": "ok",
+        "service": "distilkit",
+        "version": "0.1.0",
+    }
+
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus-format metrics for application monitoring."""
+    uptime_sec = time.time() - _start_time
+    task_statuses = [t.status for t in _tasks.values()]
+    req_total = _metrics["requests_total"]
+    dur_total = _metrics["duration_total_sec"]
+
+    lines = [
+        "# HELP distilkit_uptime_seconds Application uptime in seconds",
+        "# TYPE distilkit_uptime_seconds gauge",
+        f"distilkit_uptime_seconds {uptime_sec:.0f}",
+        "",
+        "# HELP distilkit_requests_total Total HTTP requests processed",
+        "# TYPE distilkit_requests_total counter",
+        f"distilkit_requests_total {req_total}",
+        "",
+        "# HELP distilkit_request_duration_seconds Cumulative request duration",
+        "# TYPE distilkit_request_duration_seconds counter",
+        f"distilkit_request_duration_seconds {dur_total:.3f}",
+        "",
+        "# HELP distilkit_errors_total Total 5xx responses",
+        "# TYPE distilkit_errors_total counter",
+        f"distilkit_errors_total {_metrics['errors_total']}",
+        "",
+        "# HELP distilkit_tasks_total Total tasks by status",
+        "# TYPE distilkit_tasks_total gauge",
+    ]
+    for status in ("running", "completed", "failed", "cancelled", "pending"):
+        count = task_statuses.count(status)
+        lines.append(f'distilkit_tasks_total{{status="{status}"}} {count}')
+    lines.append("")
+
+    # Per-path request counts
+    for path, count in sorted(_metrics["requests_by_path"].items()):
+        lines.append('distilkit_requests_per_path{path="' + path + '"} ' + str(count))
+    lines.append("")
+    return PlainTextResponse("\n".join(lines))
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
     """Serve the main page (HTML) or API info (JSON) in API-only mode."""
-    if API_ONLY:
+    if settings.api_only:
         return JSONResponse(
             {
                 "service": "DistilKit API",
@@ -610,19 +210,36 @@ async def index():
     return HTMLResponse(html)
 
 
+def _clamp_and_validate(value: float, name: str, lo: float, hi: float) -> float:
+    """Clamp a numeric value to [lo, hi] or raise if it's not a valid number."""
+    if lo <= value <= hi:
+        return value
+    raise HTTPException(400, f"{name} must be between {lo} and {hi}, got {value}")
+
+
 @app.post("/api/train")
-async def start_training(body: dict):
+async def start_training(body: dict, tasks: dict = Depends(get_tasks)):
     """Start a new distillation task."""
+    try:
+        raw_compression = float(body.get("compression_ratio", 0.05))
+        raw_epochs = int(body.get("epochs", 10))
+        raw_temperature = float(body.get("temperature", 4.0))
+        raw_alpha = float(body.get("alpha", 0.7))
+        raw_patience = int(body.get("patience", 0))
+        raw_batch_size = int(body.get("batch_size", 64))
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, f"Invalid numeric parameter: {e}")
+
     config = {
         "dataset": body.get("dataset", "CIFAR-10"),
         "teacher": body.get("teacher", "resnet18"),
         "student": body.get("student", "MiniCNN"),
-        "compression_ratio": float(body.get("compression_ratio", 0.05)),
-        "epochs": int(body.get("epochs", 10)),
-        "temperature": float(body.get("temperature", 4.0)),
-        "alpha": float(body.get("alpha", 0.7)),
-        "patience": int(body.get("patience", 0)),
-        "batch_size": int(body.get("batch_size", 64)),
+        "compression_ratio": _clamp_and_validate(raw_compression, "compression_ratio", 0.01, 1.0),
+        "epochs": _clamp_and_validate(raw_epochs, "epochs", 1, 1000),
+        "temperature": _clamp_and_validate(raw_temperature, "temperature", 0.1, 100.0),
+        "alpha": _clamp_and_validate(raw_alpha, "alpha", 0.0, 1.0),
+        "patience": _clamp_and_validate(raw_patience, "patience", 0, 100),
+        "batch_size": _clamp_and_validate(raw_batch_size, "batch_size", 1, 4096),
     }
 
     if config["dataset"] not in ds.DATASETS:
@@ -633,16 +250,16 @@ async def start_training(body: dict):
         raise HTTPException(400, f"Invalid student. Choose: {ds.STUDENT_CHOICES}")
 
     task = TrainingTask(config)
-    _tasks[task.id] = task
+    tasks[task.id] = task
     task.start()
 
     return {"task_id": task.id}
 
 
 @app.get("/api/train/{task_id}/stream")
-async def stream_progress(task_id: str):
+async def stream_progress(task_id: str, tasks: dict = Depends(get_tasks)):
     """SSE endpoint for real-time training progress."""
-    task = _tasks.get(task_id)
+    task = tasks.get(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
 
@@ -711,28 +328,27 @@ async def stream_progress(task_id: str):
 
 
 @app.get("/api/train/{task_id}")
-async def get_task(task_id: str):
+async def get_task(task_id: str, tasks: dict = Depends(get_tasks)):
     """Get the current state of a task."""
-    task = _tasks.get(task_id)
+    task = tasks.get(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
-
     return {
         "id": task.id,
         "status": task.status,
         "progress": task.progress,
         "current_epoch": task.current_epoch,
         "total_epochs": task.total_epochs,
-        "logs": task.logs[-2000:],  # Last 2KB
+        "logs": task.logs[-2000:],
         "result": task.result,
         "error": task.error,
     }
 
 
 @app.post("/api/export/{task_id}")
-async def export_model(task_id: str, body: dict):
+async def export_model(task_id: str, body: dict, tasks: dict = Depends(get_tasks)):
     """Export the trained student model."""
-    task = _tasks.get(task_id)
+    task = tasks.get(task_id)
     if not task or task.status != "completed":
         raise HTTPException(400, "No completed model to export")
     if task.student is None:
@@ -750,13 +366,24 @@ async def export_model(task_id: str, body: dict):
 
     try:
         if fmt == "onnx":
-            export_to_onnx(task.student, filepath)
+            try:
+                export_to_onnx(task.student, filepath)
+            except (OSError, RuntimeError) as e:
+                # ONNX export failed — degrade gracefully to TorchScript
+                self_emit = getattr(task, "_emit", None)
+                if self_emit:
+                    self_emit(f"⚠️ ONNX export failed ({e}), falling back to TorchScript.")
+                fallback = filepath.replace(".onnx", ".pt")
+                export_to_torchscript(task.student, fallback)
+                filename = filename.replace(".onnx", ".pt")
+                filepath = fallback
+                fmt = "torchscript"
         elif fmt == "torchscript":
             export_to_torchscript(task.student, filepath)
         else:
             raise HTTPException(400, "Invalid format. Use 'onnx' or 'torchscript'")
         return {"filename": filename, "path": filepath, "format": fmt}
-    except Exception as e:
+    except (OSError, RuntimeError) as e:
         raise HTTPException(500, f"Export failed: {e}")
 
 
@@ -779,15 +406,15 @@ async def get_config():
         "datasets": ds.DATASET_CHOICES,
         "teachers": ds.TEACHER_CHOICES,
         "students": ds.STUDENT_CHOICES,
-        "device": DEVICE,
+        "device": settings.device,
         "cached_teachers": cached_models,
     }
 
 
 @app.post("/api/train/{task_id}/cancel")
-async def cancel_training(task_id: str):
+async def cancel_training(task_id: str, tasks: dict = Depends(get_tasks)):
     """Cancel a running training task."""
-    task = _tasks.get(task_id)
+    task = tasks.get(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
     if task.status not in ("pending", "running"):
@@ -797,9 +424,9 @@ async def cancel_training(task_id: str):
 
 
 @app.get("/api/history")
-async def get_history():
+async def get_history(history_store: list = Depends(get_history_store)):
     """Return all completed training runs."""
-    return _history
+    return history_store
 
 
 @app.get("/api/download/{filename}")
@@ -819,7 +446,7 @@ async def download_file(filename: str):
 
 
 @app.get("/api/tasks")
-async def list_tasks():
+async def list_tasks(tasks: dict = Depends(get_tasks)):
     """List all training tasks."""
     return [
         {
@@ -832,30 +459,26 @@ async def list_tasks():
             },
             "created_at": t.created_at.isoformat(),
         }
-        for t in _tasks.values()
+        for t in tasks.values()
     ]
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-
-def launch(port: int = 7860, host: str = "127.0.0.1", api_only: bool = False) -> None:
+def launch(port: int | None = None, host: str | None = None, api_only: bool = False) -> None:
     """Launch the web server.
 
     Args:
-        port: Server port.
-        host: Bind address.
+        port: Server port (default: ``settings.port``).
+        host: Bind address (default: ``settings.host``).
         api_only: If True, only expose the REST API (no frontend).
     """
+    host = host or settings.host
+    port = port or settings.port
     import uvicorn
 
-    global API_ONLY
     if api_only:
-        API_ONLY = True
+        settings.api_only = True
 
-    mode = "API-only" if API_ONLY else "Web GUI"
+    mode = "API-only" if settings.api_only else "Web GUI"
     logger.info(f"⚡ DistilKit {mode}")
     logger.info(f"   → http://{host}:{port}")
     logger.info("   → Press Ctrl+C to stop\n")

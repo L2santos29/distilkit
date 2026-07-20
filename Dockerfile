@@ -65,7 +65,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libopenblas-dev \
     libomp-dev \
-    aria2c \
+    aria2 \
     wget \
     curl \
     && rm -rf /var/lib/apt/lists/* \

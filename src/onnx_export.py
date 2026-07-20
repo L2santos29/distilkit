@@ -44,22 +44,26 @@ def export_to_onnx(
     if dynamic_batch:
         dynamic_axes = {"input": {0: "batch"}, "output": {0: "batch"}}
 
-    torch.onnx.export(
-        model,
-        dummy_input,
-        str(output_path),
-        input_names=["input"],
-        output_names=["output"],
-        dynamic_axes=dynamic_axes,
-        opset_version=opset_version,
-        do_constant_folding=True,
-    )
+    try:
+        torch.onnx.export(
+            model,
+            dummy_input,
+            str(output_path),
+            input_names=["input"],
+            output_names=["output"],
+            dynamic_axes=dynamic_axes,
+            opset_version=opset_version,
+            do_constant_folding=True,
+        )
 
-    # Verify export
-    import onnx
+        # Verify export
+        import onnx
 
-    onnx_model = onnx.load(str(output_path))
-    onnx.checker.check_model(onnx_model)
+        onnx_model = onnx.load(str(output_path))
+        onnx.checker.check_model(onnx_model)
+    except Exception as e:
+        logger.error(f"❌ ONNX export failed: {e}")
+        raise RuntimeError(f"ONNX export failed: {e}") from e
 
     logger.info(f"✅ Exported to {output_path} ({output_path.stat().st_size / 1e6:.1f} MB)")
     return output_path
@@ -84,10 +88,14 @@ def export_to_torchscript(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    dummy_input = torch.randn(*input_shape)
-    traced = torch.jit.trace(model, dummy_input)
+    try:
+        dummy_input = torch.randn(*input_shape)
+        traced = torch.jit.trace(model, dummy_input)
 
-    torch.jit.save(traced, str(output_path))
+        torch.jit.save(traced, str(output_path))
+    except Exception as e:
+        logger.error(f"❌ TorchScript export failed: {e}")
+        raise RuntimeError(f"TorchScript export failed: {e}") from e
 
     logger.info(
         f"✅ Exported TorchScript to {output_path} ({output_path.stat().st_size / 1e6:.1f} MB)"
@@ -95,19 +103,3 @@ def export_to_torchscript(
     return output_path
 
 
-def quantize_model(
-    model: nn.Module,
-) -> nn.Module:
-    """Apply post-training static quantization (INT8).
-
-    Args:
-        model: FP32 trained model.
-
-    Returns:
-        Quantized model ready for ONNX Runtime.
-    """
-    model.eval()
-    torch.ao.quantization.prepare(model, inplace=True)
-    # Note: calibration data required in production use
-    torch.ao.quantization.convert(model, inplace=True)
-    return model

@@ -9,24 +9,13 @@ import torch
 import torch.nn as nn
 
 from src import datasets as ds
-from src.benchmarks import benchmark, compare_teacher_student
-from src.distiller import Distiller
+from src.benchmarks import MS_PER_SEC, benchmark
 from src.log_config import logger
-from src.onnx_export import export_to_onnx, export_to_torchscript
-from src.student import build_student
-from src.teacher import load_teacher
+from src.pipeline import PipelineError, run_distillation_pipeline
+from src.settings import settings
 
 DATASET_CHOICES = ds.DATASET_CHOICES
 TEACHER_CHOICES = ds.TEACHER_CHOICES
-
-# ---------------------------------------------------------------------------
-# Data helpers
-# ---------------------------------------------------------------------------
-
-
-def _get_dataset_loaders(dataset_name: str, batch_size: int, data_root: str = "./data"):
-    """Return (train_loader, val_loader, num_classes, in_channels) via shared module."""
-    return ds.get_dataset_loaders(dataset_name, batch_size, data_root)
 
 
 # ---------------------------------------------------------------------------
@@ -113,13 +102,13 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument(
         "--benchmark",
         choices=["cpu", "cuda", "none"],
-        default="cpu",
-        help="Benchmark teacher vs student on target device (default: cpu)",
+        default=settings.device,
+        help=f"Benchmark target device (default: {settings.device})",
     )
     train_parser.add_argument(
         "--output-dir",
-        default="checkpoints",
-        help="Directory for exported models (default: checkpoints)",
+        default=settings.checkpoints_dir,
+        help=f"Directory for exported models (default: {settings.checkpoints_dir})",
     )
     train_parser.add_argument(
         "--ckpt-every",
@@ -134,8 +123,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train_parser.add_argument(
         "--data-dir",
-        default="./data",
-        help="Dataset cache directory (default: ./data)",
+        default=settings.data_dir,
+        help=f"Dataset cache directory (default: {settings.data_dir})",
     )
 
     # ---- benchmark ----
@@ -148,8 +137,8 @@ def build_parser() -> argparse.ArgumentParser:
     bench_parser.add_argument(
         "--target",
         choices=["cpu", "cuda", "npu"],
-        default="cpu",
-        help="Target device (default: cpu)",
+        default=settings.device,
+        help=f"Target device (default: {settings.device})",
     )
     bench_parser.add_argument(
         "--runs",
@@ -209,153 +198,34 @@ def cmd_train(args: argparse.Namespace) -> nn.Module | None:
     logger.info("=" * 60)
     print()
 
-    # 1. Data
-    logger.info(f"📦 Loading {args.dataset}...")
-    train_loader, val_loader, num_classes, in_channels = _get_dataset_loaders(
-        args.dataset, args.batch_size, args.data_dir
-    )
-
-    # 2. Teacher
-    logger.info(f"🧠 Loading teacher ({args.teacher})...")
-    teacher = load_teacher(args.teacher, num_classes=num_classes)
-    teacher_params = sum(p.numel() for p in teacher.parameters())
-    logger.info(f"   Parameters: {teacher_params:,}")
-
-    # 3. Student
-    logger.info("🔧 Building student...")
-    student = build_student(
-        teacher=teacher,
-        student_type="MiniCNN",
-        compression_ratio=args.compression_ratio,
-        num_classes=num_classes,
-        in_channels=in_channels,
-    )
-    student_params = sum(p.numel() for p in student.parameters())
-    logger.info(f"   Parameters: {student_params:,}")
-    logger.info(f"   Compression: {student_params / teacher_params:.2%} of teacher size")
-    print()
-
-    # 4. Distill
-    logger.info(f"🔄 Training ({args.epochs} epochs)...")
-    os.makedirs("checkpoints", exist_ok=True)
-
-    if args.resume and os.path.exists(args.resume):
-        logger.info(f"📂 Resuming from {args.resume}...")
-        ckpt = torch.load(args.resume, map_location="cpu", weights_only=False)
-        student.load_state_dict(ckpt["model"])
-        start_epoch = ckpt.get("epoch", 0)
-        logger.info(f"   Resumed at epoch {start_epoch}")
-    else:
-        start_epoch = 0
-
-    distiller = Distiller(
-        teacher,
-        student,
-        temperature=args.temperature,
-        alpha=args.alpha,
-    )
-
-    # For checkpointing, we implement the training loop here
-    # instead of calling distiller.train() so we can save mid-training
-
-    optimizer = torch.optim.Adam(student.parameters(), lr=1e-3)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs)
-    history = {"train_loss": [], "val_acc": []}
-
-    for epoch in range(start_epoch, args.epochs):
-        # Train
-        student.train()
-        epoch_loss = 0.0
-        for images, labels in train_loader:
-            images, labels = images.to("cpu"), labels.to("cpu")
-            with torch.no_grad():
-                teacher_logits = teacher(images)
-            student_logits = student(images)
-            loss = distiller.criterion(student_logits, teacher_logits, labels)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            epoch_loss += loss.item()
-        avg_loss = epoch_loss / len(train_loader)
-        history["train_loss"].append(avg_loss)
-
-        # Validate
-        student.eval()
-        correct = total = 0
-        with torch.no_grad():
-            for images, labels in val_loader:
-                images, labels = images.to("cpu"), labels.to("cpu")
-                outputs = student(images)
-                _, predicted = outputs.max(1)
-                total += labels.size(0)
-                correct += predicted.eq(labels).sum().item()
-        acc = correct / total
-        history["val_acc"].append(acc)
-
-        # Early stopping
-        if args.patience > 0:
-            if not hasattr(cmd_train, "_best_acc"):
-                cmd_train._best_acc = 0.0
-                cmd_train._patience_counter = 0
-            if acc > cmd_train._best_acc + 0.001:
-                cmd_train._best_acc = acc
-                cmd_train._patience_counter = 0
-            else:
-                cmd_train._patience_counter += 1
-                if cmd_train._patience_counter >= args.patience:
-                    logger.info(f"   ⏹️ Early stopping (best: {cmd_train._best_acc:.2%})")
-                    break
-
-        scheduler.step()
-
-        logger.info(f"Epoch {epoch + 1}/{args.epochs} — Loss: {avg_loss:.4f} — Val Acc: {acc:.2%}")
-
-        # Checkpoint
-        if args.ckpt_every > 0 and (epoch + 1) % args.ckpt_every == 0:
-            ckpt_path = f"checkpoints/checkpoint_epoch_{epoch + 1}.pt"
-            torch.save(
-                {
-                    "epoch": epoch + 1,
-                    "model": student.state_dict(),
-                    "optimizer": optimizer.state_dict(),
-                    "losses": history["train_loss"],
-                    "accuracies": history["val_acc"],
-                    "config": vars(args),
-                },
-                ckpt_path,
-            )
-            logger.info(f"   💾 Checkpoint saved: {ckpt_path}")
-
-    print()
-
-    # 5. Benchmark
-    if args.benchmark != "none":
-        logger.info(f"📊 Benchmarking on {args.benchmark}...")
-        comparison = compare_teacher_student(teacher, student, target=args.benchmark)
-        logger.info(
-            f"   Teacher : {comparison['teacher']['mean_ms']:.2f} ms  "
-            f"({comparison['teacher']['parameters']:,} params)"
+    try:
+        result = run_distillation_pipeline(
+            dataset_name=args.dataset,
+            teacher_name=args.teacher,
+            student_type="MiniCNN",
+            compression_ratio=args.compression_ratio,
+            batch_size=args.batch_size,
+            data_root=args.data_dir,
+            epochs=args.epochs,
+            temperature=args.temperature,
+            alpha=args.alpha,
+            device=settings.device,
+            patience=args.patience,
+            ckpt_dir="checkpoints",
+            ckpt_every=args.ckpt_every,
+            resume=args.resume,
+            benchmark_target=args.benchmark,
+            export_format=args.export,
+            export_output_dir=args.output_dir,
+            on_message=logger.info,
         )
-        logger.info(
-            f"   Student : {comparison['student']['mean_ms']:.2f} ms  "
-            f"({comparison['student']['parameters']:,} params)"
-        )
-        logger.info(f"   Speedup : {comparison['speedup']}x")
-        logger.info(f"   Size    : {comparison['compression']:.2%} of teacher")
-        print()
-
-    # 6. Export
-    if args.export != "none":
-        os.makedirs(args.output_dir, exist_ok=True)
-        if args.export == "onnx":
-            path = export_to_onnx(student, f"{args.output_dir}/student.onnx")
-        else:
-            path = export_to_torchscript(student, f"{args.output_dir}/student.pt")
-        logger.info(f"   Exported to: {path}")
+    except PipelineError as e:
+        logger.error(f"❌ {e}")
+        sys.exit(1)
 
     print()
     logger.info("✅ Training complete!")
-    return student
+    return result["student"]
 
 
 def cmd_benchmark(args: argparse.Namespace) -> None:
@@ -370,48 +240,60 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
 
         nproc = os.cpu_count() or 4
 
-        # ONNX Runtime session with optimized thread settings for CPU
-        so = ort.SessionOptions()
-        so.intra_op_num_threads = nproc
-        so.inter_op_num_threads = max(1, nproc // 2)
-        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        so.enable_cpu_mem_arena = True
+        try:
+            # ONNX Runtime session with optimized thread settings for CPU
+            so = ort.SessionOptions()
+            so.intra_op_num_threads = nproc
+            so.inter_op_num_threads = max(1, nproc // 2)
+            so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            so.enable_cpu_mem_arena = True
 
-        session = ort.InferenceSession(args.model, so)
-        input_name = session.get_inputs()[0].name
-        input_shape = session.get_inputs()[0].shape
+            session = ort.InferenceSession(args.model, so)
+            input_name = session.get_inputs()[0].name
+            input_shape = session.get_inputs()[0].shape
 
-        logger.info(f"   ONNX Runtime threads: intra={so.intra_op_num_threads}, inter={so.inter_op_num_threads}")
+            logger.info(f"   ONNX Runtime threads: intra={so.intra_op_num_threads}, inter={so.inter_op_num_threads}")
 
-        dummy = np.random.randn(*input_shape).astype(np.float32)
+            dummy = np.random.randn(*input_shape).astype(np.float32)
 
-        # Warmup
-        for _ in range(10):
-            session.run(None, {input_name: dummy})
+            # Warmup
+            for _ in range(10):
+                session.run(None, {input_name: dummy})
 
-        # Benchmark
-        import time
+            # Benchmark
+            import time
 
-        timings = []
-        for _ in range(args.runs):
-            start = time.perf_counter()
-            session.run(None, {input_name: dummy})
-            end = time.perf_counter()
-            timings.append((end - start) * 1000)
+            timings = []
+            for _ in range(args.runs):
+                start = time.perf_counter()
+                session.run(None, {input_name: dummy})
+                end = time.perf_counter()
+                timings.append((end - start) * MS_PER_SEC)
 
-        mean_ms = sum(timings) / len(timings)
-        logger.info(f"   Mean inference: {mean_ms:.3f} ms")
-        logger.info(f"   Throughput: {1000 / mean_ms:.1f} img/s")
+            mean_ms = sum(timings) / len(timings)
+            logger.info(f"   Mean inference: {mean_ms:.3f} ms")
+            logger.info(f"   Throughput: {MS_PER_SEC / mean_ms:.1f} img/s")
+        except Exception as e:
+            logger.error(f"❌ ONNX benchmark failed for {args.model}: {e}")
+            return
     else:
         # PyTorch model
-        model = torch.load(args.model, map_location=args.target)
+        try:
+            model = torch.load(args.model, map_location=args.target)
+        except Exception as e:
+            logger.error(f"❌ Failed to load model {args.model}: {e}")
+            return
         if isinstance(model, dict) and "state_dict" in model:
             # Try to reconstruct student and load weights
             logger.info("   Loading checkpoint...")
             from src.student import MiniCNN
 
-            model = MiniCNN(num_classes=10)
-            model.load_state_dict(torch.load(args.model, map_location=args.target))
+            try:
+                model = MiniCNN(num_classes=10)
+                model.load_state_dict(torch.load(args.model, map_location=args.target))
+            except Exception as e:
+                logger.error(f"❌ Failed to load checkpoint {args.model}: {e}")
+                return
 
         results = benchmark(model, target=args.target, benchmark_runs=args.runs)
         logger.info(f"   Mean    : {results['mean_ms']:.3f} ms")
@@ -427,14 +309,20 @@ def cmd_export(args: argparse.Namespace) -> None:
     # Load the PyTorch model
     from src.student import MiniCNN
 
-    model = MiniCNN(num_classes=10)
-    state = torch.load(args.model, map_location="cpu")
-    if isinstance(state, dict) and "state_dict" in state:
-        model.load_state_dict(state["state_dict"])
-    else:
-        model.load_state_dict(state)
+    try:
+        model = MiniCNN(num_classes=10)
+        state = torch.load(args.model, map_location="cpu")
+        if isinstance(state, dict) and "state_dict" in state:
+            model.load_state_dict(state["state_dict"])
+        else:
+            model.load_state_dict(state)
+    except Exception as e:
+        logger.error(f"❌ Failed to load model {args.model}: {e}")
+        return
 
     output = args.output or f"checkpoints/student.{'onnx' if args.format == 'onnx' else 'pt'}"
+
+    from src.onnx_export import export_to_onnx, export_to_torchscript
 
     if args.format == "onnx":
         export_to_onnx(model, output)

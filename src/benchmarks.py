@@ -13,6 +13,10 @@ import torch.nn as nn
 
 DeviceTarget = Literal["cpu", "cuda", "npu"]
 
+# Seconds → milliseconds conversion factor
+MS_PER_SEC: int = 1000
+
+
 
 def benchmark(
     model: nn.Module,
@@ -52,7 +56,7 @@ def benchmark(
             if target == "cuda":
                 torch.cuda.synchronize()
             end = time.perf_counter()
-            timings.append((end - start) * 1000)  # Convert to ms
+            timings.append((end - start) * MS_PER_SEC)
 
     timings = np.array(timings)
     batch_size = input_shape[0]
@@ -66,7 +70,7 @@ def benchmark(
         "median_ms": round(float(np.median(timings)), 3),
         "p95_ms": round(float(np.percentile(timings, 95)), 3),
         "std_ms": round(float(np.std(timings)), 3),
-        "throughput_imgs_per_sec": round(batch_size / (np.mean(timings) / 1000), 1),
+        "throughput_imgs_per_sec": round(batch_size / (np.mean(timings) / MS_PER_SEC), 1),
     }
 
 
@@ -109,17 +113,8 @@ def compare_teacher_student(
 
 
 def _resolve_device(target: DeviceTarget) -> torch.device:
-    """Resolve a device target string to a ``torch.device``.
-
-    Args:
-        target: Device identifier ("cpu", "cuda", "npu").
-
-    Returns:
-        Resolved torch device.
-
-    Raises:
-        RuntimeError: If CUDA is requested but not available.
-    """
+    # Give a clear error if CUDA was requested but isn't available,
+    # rather than letting torch.device("cuda") fail with a cryptic message.
     if target == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA requested but not available")
     return torch.device(target)

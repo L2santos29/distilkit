@@ -3,7 +3,6 @@
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.6+-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![ONNX](https://img.shields.io/badge/ONNX-005CED?logo=onnx&logoColor=white)](https://onnx.ai/)
-[![Status](https://img.shields.io/badge/Status-Pre--Alpha-FF6B35)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 **Knowledge Distillation Framework for Model Compression and Deployment**
@@ -12,7 +11,7 @@
 
 ---
 
-## 🎯 What is DistilKit?
+## What is DistilKit?
 
 DistilKit is a lightweight framework for **knowledge distillation** — the technique of compressing large, powerful models (teachers) into smaller, faster deployable versions (students) that retain most of the original accuracy.
 
@@ -24,7 +23,7 @@ DistilKit is a lightweight framework for **knowledge distillation** — the tech
 
 ---
 
-## 🧪 How Knowledge Distillation Works
+## How Knowledge Distillation Works
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -59,7 +58,7 @@ DistilKit is a lightweight framework for **knowledge distillation** — the tech
 
 ---
 
-## 🔧 Stack
+## Stack
 
 | Component | Tech |
 |-----------|------|
@@ -71,7 +70,7 @@ DistilKit is a lightweight framework for **knowledge distillation** — the tech
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ```bash
 # Clone
@@ -96,7 +95,7 @@ distilkit gui
 
 ---
 
-## 🖥️ CLI Mode
+## CLI Mode
 
 Train, benchmark, and export models directly from the terminal.
 
@@ -130,7 +129,7 @@ distilkit gui
 
 ---
 
-## 🎨 GUI Mode (Web)
+## GUI Mode (Web)
 
 Web-based interface built with **FastAPI** + **Tailwind CSS** + **Chart.js**.
 
@@ -160,7 +159,7 @@ Opens `http://localhost:7860` in your browser with:
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 distilkit/
@@ -177,6 +176,7 @@ distilkit/
 │   └── onnx_export.py     # ONNX / TorchScript export utilities
 ├── examples/
 │   └── basic_classifier.py   # Full distillation example
+├── .env.example          # Environment variable reference
 ├── tests/
 │   └── test_distiller.py
 ├── scripts/
@@ -187,7 +187,7 @@ distilkit/
 
 ---
 
-## 🐍 Python API Example
+## Python API Example
 
 ```python
 from src.distiller import Distiller
@@ -216,7 +216,7 @@ print(f"Inference time: {results['mean_ms']:.2f} ms")
 
 ---
 
-## 📈 Expected Results (ResNet → Mini-ResNet, CIFAR-10)
+## Expected Results (ResNet → Mini-ResNet, CIFAR-10)
 
 | Model | Parameters | Accuracy | Inference (CPU) | Size |
 |-------|-----------|----------|-----------------|------|
@@ -226,12 +226,31 @@ print(f"Inference time: {results['mean_ms']:.2f} ms")
 
 ---
 
-## 🏗️ Status
+## Configuration
+
+All configuration is done through environment variables. Copy ``.env.example`` to ``.env``
+and adjust as needed — all variables are optional with sensible defaults.
+
+| Variable | Default | Choices | Description |
+|----------|---------|---------|-------------|
+| ``DEVICE`` | ``cpu`` | cpu, cuda, npu | Target device for training/inference |
+| ``HOST`` | ``127.0.0.1`` | — | Web server bind address (use ``0.0.0.0`` for Docker) |
+| ``PORT`` | ``7860`` | — | Web server port |
+| ``API_ONLY`` | ``false`` | true, false | Run in API-only mode (no frontend) |
+| ``RUNS_DIR`` | ``runs`` | — | Directory for persisted run history |
+| ``DATA_DIR`` | ``./data`` | — | Dataset cache directory |
+| ``CHECKPOINTS_DIR`` | ``checkpoints`` | — | Export and checkpoint directory |
+| ``MAX_LOG_SIZE`` | ``100000`` | — | Max characters in in-memory log buffer |
+| ``LOG_LEVEL`` | ``INFO`` | DEBUG, INFO, WARNING, ERROR | Logging verbosity |
+
+---
+
+## Status
 
 **Pre-Alpha** — Core distillation loop and benchmarking framework complete. Currently implementing ONNX Runtime integration and NPU benchmark targets.
 
 ---
 
-## 📄 License
+## License
 
 MIT — See [LICENSE](LICENSE)

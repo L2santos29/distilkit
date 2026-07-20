@@ -15,6 +15,26 @@ from torchvision import datasets, transforms
 
 from src.log_config import logger
 
+# ---- Constants for downloading ----
+
+# Read chunk size when downloading datasets via urllib (bytes)
+DOWNLOAD_CHUNK_SIZE: int = 8192
+
+# Maximum number of download retries before giving up
+MAX_DOWNLOAD_RETRIES: int = 3
+
+# Base delay (seconds) for exponential backoff between retries
+RETRY_BASE_DELAY_SEC: int = 2
+
+# Timeout (seconds) for each ``urllib.request.urlopen`` call
+URLOPEN_TIMEOUT_SEC: int = 30
+
+# Timeout (seconds) for ``subprocess.run`` calls (checking tool availability)
+SUBPROCESS_CHECK_TIMEOUT_SEC: int = 10
+
+# Timeout (seconds) for downloading via aria2c / wget / curl
+SUBPROCESS_DOWNLOAD_TIMEOUT_SEC: int = 300
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -125,12 +145,18 @@ def download_cifar10(
 
     logger.info("⬇️ Downloading CIFAR-10 (170 MB)...")
 
-    has_aria2c = subprocess.run(["which", "aria2c"], capture_output=True).returncode == 0
-    has_wget = subprocess.run(["which", "wget"], capture_output=True).returncode == 0
-    has_curl = subprocess.run(["which", "curl"], capture_output=True).returncode == 0
+    has_aria2c = (
+        subprocess.run(["which", "aria2c"], capture_output=True, timeout=SUBPROCESS_CHECK_TIMEOUT_SEC).returncode == 0
+    )
+    has_wget = (
+        subprocess.run(["which", "wget"], capture_output=True, timeout=SUBPROCESS_CHECK_TIMEOUT_SEC).returncode == 0
+    )
+    has_curl = (
+        subprocess.run(["which", "curl"], capture_output=True, timeout=SUBPROCESS_CHECK_TIMEOUT_SEC).returncode == 0
+    )
 
-    max_retries = 3
-    base_delay = 2
+    max_retries = MAX_DOWNLOAD_RETRIES
+    base_delay = RETRY_BASE_DELAY_SEC
     downloaded_ok = False
 
     for attempt in range(1, max_retries + 1):
@@ -169,7 +195,12 @@ def download_cifar10(
                 proc = subprocess.Popen(cmd)
                 if subprocess_tracker is not None:
                     subprocess_tracker.append(proc)
-                proc.wait()
+                try:
+                    proc.wait(timeout=SUBPROCESS_DOWNLOAD_TIMEOUT_SEC)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    logger.info(f"   {tool_name} timed out after {SUBPROCESS_DOWNLOAD_TIMEOUT_SEC}s")
+                    continue
                 if subprocess_tracker is not None:
                     subprocess_tracker.clear()
                 if os.path.exists(cifar_tgz) and os.path.getsize(cifar_tgz) == expected_size:
@@ -186,9 +217,9 @@ def download_cifar10(
                     return False
                 try:
                     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                    resp = urllib.request.urlopen(req)
+                    resp = urllib.request.urlopen(req, timeout=URLOPEN_TIMEOUT_SEC)
                     total = int(resp.headers.get("Content-Length", expected_size))
-                    downloaded, chunk = 0, 8192
+                    downloaded, chunk = 0, DOWNLOAD_CHUNK_SIZE
                     with open(cifar_tgz, "wb") as f:
                         while True:
                             if cancel_flag():

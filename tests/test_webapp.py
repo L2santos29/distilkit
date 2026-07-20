@@ -9,7 +9,9 @@ from fastapi.testclient import TestClient
 os.environ["DEVICE"] = "cpu"
 
 from src import datasets as ds
-from src.webapp import _load_history, _save_run, app
+from src.settings import settings
+from src.task_manager import _load_history, _save_run
+from src.webapp import app
 
 DATASET_CHOICES = ds.DATASET_CHOICES
 TEACHER_CHOICES = ds.TEACHER_CHOICES
@@ -24,23 +26,19 @@ class TestHistory:
     def test_load_history_empty(self):
         """_load_history should return empty list when no runs directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            original = "runs"
-            import src.webapp
-
-            src.webapp.RUNS_DIR = tmpdir
+            original = settings.runs_dir
+            settings.runs_dir = tmpdir
             try:
                 history = _load_history()
                 assert history == []
             finally:
-                src.webapp.RUNS_DIR = original
+                settings.runs_dir = original
 
     def test_save_and_load(self):
         """_save_run should persist and _load_history should retrieve."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            import src.webapp
-
-            original = src.webapp.RUNS_DIR
-            src.webapp.RUNS_DIR = tmpdir
+            original = settings.runs_dir
+            settings.runs_dir = tmpdir
             try:
                 run = {"id": "test123", "result": {"accuracy": 0.95}}
                 _save_run(run)
@@ -49,15 +47,13 @@ class TestHistory:
                 assert history[0]["id"] == "test123"
                 assert history[0]["result"]["accuracy"] == 0.95
             finally:
-                src.webapp.RUNS_DIR = original
+                settings.runs_dir = original
 
     def test_save_corrupted_file_skipped(self):
         """Corrupted JSON files should be skipped during load."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            import src.webapp
-
-            original = src.webapp.RUNS_DIR
-            src.webapp.RUNS_DIR = tmpdir
+            original = settings.runs_dir
+            settings.runs_dir = tmpdir
             try:
                 # Write a valid run
                 _save_run({"id": "valid1", "result": {"acc": 0.9}})
@@ -68,7 +64,7 @@ class TestHistory:
                 assert len(history) == 1
                 assert history[0]["id"] == "valid1"
             finally:
-                src.webapp.RUNS_DIR = original
+                settings.runs_dir = original
 
 
 class TestAPI:

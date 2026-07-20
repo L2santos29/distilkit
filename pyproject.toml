@@ -35,7 +35,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "pytest-cov>=6.0"]
 
 [project.scripts]
 distilkit = "src.cli:main"
@@ -49,6 +49,27 @@ include = ["src*"]
 minversion = "7.0"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+addopts = [
+    "--tb=short",
+    "--no-header",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["src/templates/*"]
+
+[tool.coverage.report]
+# Enforce ≥80% coverage on the src/ package.
+fail_under = 80
+show_missing = true
+skip_covered = false
+precision = 1
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.",
+    "raise NotImplementedError",
+]
 
 [tool.ruff]
 target-version = "py312"

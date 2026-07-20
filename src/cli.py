@@ -153,6 +153,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory for exported models (default: checkpoints)",
     )
     train_parser.add_argument(
+        "--ckpt-every", type=int, default=5,
+        help="Save checkpoint every N epochs (0 to disable, default: 5)",
+    )
+    train_parser.add_argument(
+        "--resume", default=None,
+        help="Path to checkpoint to resume from (.pt file)",
+    )
+    train_parser.add_argument(
         "--data-dir", default="./data",
         help="Dataset cache directory (default: ./data)",
     )
@@ -239,12 +247,78 @@ def cmd_train(args: argparse.Namespace):
 
     # 4. Distill
     print(f"🔄 Training ({args.epochs} epochs)...")
+    os.makedirs("checkpoints", exist_ok=True)
+
+    if args.resume and os.path.exists(args.resume):
+        print(f"📂 Resuming from {args.resume}...")
+        ckpt = torch.load(args.resume, map_location="cpu", weights_only=False)
+        student.load_state_dict(ckpt["model"])
+        start_epoch = ckpt.get("epoch", 0)
+        print(f"   Resumed at epoch {start_epoch}")
+    else:
+        start_epoch = 0
+
     distiller = Distiller(
         teacher, student,
         temperature=args.temperature,
         alpha=args.alpha,
     )
-    history = distiller.train(train_loader, val_loader, epochs=args.epochs)
+
+    # For checkpointing, we implement the training loop here
+    # instead of calling distiller.train() so we can save mid-training
+    import torch.nn.functional as F
+    from torch.utils.data import DataLoader
+
+    optimizer = torch.optim.Adam(student.parameters(), lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs)
+    history = {"train_loss": [], "val_acc": []}
+
+    for epoch in range(start_epoch, args.epochs):
+        # Train
+        student.train()
+        epoch_loss = 0.0
+        for images, labels in train_loader:
+            images, labels = images.to("cpu"), labels.to("cpu")
+            with torch.no_grad():
+                teacher_logits = teacher(images)
+            student_logits = student(images)
+            loss = distiller.criterion(student_logits, teacher_logits, labels)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item()
+        avg_loss = epoch_loss / len(train_loader)
+        history["train_loss"].append(avg_loss)
+
+        # Validate
+        student.eval()
+        correct = total = 0
+        with torch.no_grad():
+            for images, labels in val_loader:
+                images, labels = images.to("cpu"), labels.to("cpu")
+                outputs = student(images)
+                _, predicted = outputs.max(1)
+                total += labels.size(0)
+                correct += predicted.eq(labels).sum().item()
+        acc = correct / total
+        history["val_acc"].append(acc)
+        scheduler.step()
+
+        print(f"Epoch {epoch+1}/{args.epochs} — Loss: {avg_loss:.4f} — Val Acc: {acc:.2%}")
+
+        # Checkpoint
+        if args.ckpt_every > 0 and (epoch + 1) % args.ckpt_every == 0:
+            ckpt_path = f"checkpoints/checkpoint_epoch_{epoch+1}.pt"
+            torch.save({
+                "epoch": epoch + 1,
+                "model": student.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "losses": history["train_loss"],
+                "accuracies": history["val_acc"],
+                "config": vars(args),
+            }, ckpt_path)
+            print(f"   💾 Checkpoint saved: {ckpt_path}")
+
     print()
 
     # 5. Benchmark

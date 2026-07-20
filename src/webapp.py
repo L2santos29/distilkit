@@ -430,12 +430,32 @@ class TrainingTask:
                 device=DEVICE,
             )
 
+            # ── Checkpoint directory ──
+            ckpt_dir = "checkpoints"
+            ckpt_every = self.config.get("ckpt_every", 5)
+            os.makedirs(ckpt_dir, exist_ok=True)
+
             optimizer = torch.optim.Adam(student.parameters(), lr=1e-3)
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer, self.config["epochs"]
             )
 
-            for epoch in range(self.config["epochs"]):
+            start_epoch = 0
+            # Resume from checkpoint if provided
+            resume_from = self.config.get("resume")
+            if resume_from and os.path.exists(resume_from):
+                self._emit(f"📂 Resuming from checkpoint: {resume_from}")
+                self._flush_logs()
+                ckpt = torch.load(resume_from, map_location=DEVICE, weights_only=False)
+                student.load_state_dict(ckpt["model"])
+                optimizer.load_state_dict(ckpt["optimizer"])
+                start_epoch = ckpt["epoch"]
+                self.losses = ckpt.get("losses", [])
+                self.accuracies = ckpt.get("accuracies", [])
+                self._emit(f"   Resumed at epoch {start_epoch}/{self.config['epochs']}")
+                self._flush_logs()
+
+            for epoch in range(start_epoch, self.config["epochs"]):
                 if self._cancel_requested:
                     self._emit("\n⛔ Training cancelled during epoch.")
                     self._flush_logs()
@@ -491,6 +511,20 @@ class TrainingTask:
                     f"Epoch {epoch+1}/{self.config['epochs']} — "
                     f"Loss: {avg_loss:.4f} — Val Acc: {acc:.2%}"
                 )
+
+                # --- Checkpoint ---
+                if ckpt_every > 0 and (epoch + 1) % ckpt_every == 0:
+                    ckpt_path = os.path.join(ckpt_dir, f"checkpoint_epoch_{epoch+1}.pt")
+                    torch.save({
+                        "epoch": epoch + 1,
+                        "model": student.state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                        "losses": self.losses,
+                        "accuracies": self.accuracies,
+                        "config": self.config,
+                    }, ckpt_path)
+                    self._emit(f"   💾 Checkpoint saved: {ckpt_path}")
+
                 self._flush_logs()
 
             # --- Benchmark ---

@@ -181,10 +181,12 @@
               </span>
             </div>
           </div>
-          <canvas id="training-chart" height="220"></canvas>
-          <div id="chart-empty" class="text-center py-16 text-slate-600">
-            <p class="text-4xl mb-2">📊</p>
-            <p class="text-sm">Run a training to see the chart</p>
+          <div id="chart-wrapper" style="position:relative; height:260px;">
+            <canvas id="training-chart"></canvas>
+            <div id="chart-empty" class="absolute inset-0 flex flex-col items-center justify-center text-slate-600">
+              <p class="text-4xl mb-2">📊</p>
+              <p class="text-sm">Run a training to see the chart</p>
+            </div>
           </div>
         </div>
 
@@ -262,8 +264,16 @@
     let chart = null;
 
     function initChart() {
+      const wrapper = document.getElementById('chart-wrapper');
       if (chart) { chart.destroy(); }
       document.getElementById('chart-empty').classList.add('hidden');
+
+      // Prevent canvas from stretching by fixing its size to the parent
+      const rect = wrapper.getBoundingClientRect();
+      const canvas = document.getElementById('training-chart');
+      canvas.style.width = rect.width + 'px';
+      canvas.style.height = rect.height + 'px';
+
       chart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -276,18 +286,22 @@
           ]
         },
         options: {
-          responsive: true,
+          responsive: false,
           maintainAspectRatio: false,
-          animation: { duration: 200 },
+          animation: false,
+          resize: false,
           interaction: { mode: 'index', intersect: false },
           plugins: { legend: { display: false } },
           scales: {
             x: { grid: { color: 'rgba(71,85,105,0.2)' }, ticks: { color: '#64748b', font: { size: 10 } } },
             y: { position: 'left', grid: { color: 'rgba(71,85,105,0.15)' },
-                 ticks: { color: '#818cf8', font: { size: 10 } }, title: { display: true, text: 'Loss', color: '#818cf8' } },
+                 ticks: { color: '#818cf8', font: { size: 10 } },
+                 title: { display: true, text: 'Loss', color: '#818cf8' },
+                 beginAtZero: true },
             y1: { position: 'right', grid: { display: false },
                   ticks: { color: '#34d399', font: { size: 10 }, callback: v => (v * 100).toFixed(0) + '%' },
-                  title: { display: true, text: 'Accuracy', color: '#34d399' }, min: 0, max: 1 },
+                  title: { display: true, text: 'Accuracy', color: '#34d399' },
+                  min: 0, max: 1, beginAtZero: true },
           }
         }
       });
@@ -306,6 +320,7 @@
     let currentTaskId = null;
     let eventSource = null;
     let trainedStudentId = null;
+    let lastChartLen = 0;  // Track last chart data length to avoid redraws
 
     function setTrainingMode(active) {
       $('train-btn').disabled = active;
@@ -344,6 +359,7 @@
       // Reset chart
       if (chart) chart.destroy();
       chart = null;
+      lastChartLen = 0;
       $('chart-empty').classList.remove('hidden');
 
       try {
@@ -409,7 +425,7 @@
       }
 
       // Status
-      if (data.current_epoch && data.total_epochs) {
+      if (data.current_epoch != null && data.total_epochs) {
         let html = `
           <div class="flex justify-between"><span class="text-slate-400">Status</span><span class="text-brand-400 font-medium capitalize">${data.status}</span></div>
           <div class="flex justify-between"><span class="text-slate-400">Epoch</span><span class="font-mono">${data.current_epoch} / ${data.total_epochs}</span></div>`;
@@ -422,14 +438,17 @@
         $('status-card').innerHTML = html;
       }
 
-      // Chart
+      // Chart — only redraw when data actually changed
       if (data.losses && data.losses.length > 0) {
         if (!chart) initChart();
-        const labels = data.losses.map((_, i) => `E${i + 1}`);
-        chart.data.labels = labels;
-        chart.data.datasets[0].data = data.losses;
-        chart.data.datasets[1].data = data.accuracies || [];
-        chart.update('none');
+        if (data.losses.length !== lastChartLen) {
+          lastChartLen = data.losses.length;
+          const labels = data.losses.map((_, i) => `E${i + 1}`);
+          chart.data.labels = labels;
+          chart.data.datasets[0].data = data.losses;
+          chart.data.datasets[1].data = data.accuracies || [];
+          chart.update('none');
+        }
       }
     }
 

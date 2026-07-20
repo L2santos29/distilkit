@@ -105,11 +105,18 @@ def download_cifar10(
     os.makedirs(ds_root, exist_ok=True)
 
     if os.path.isdir(extracted_dir):
-        return True
+        # Verify the extracted data has the expected files
+        batch_files = [f"data_batch_{i}" for i in range(1, 6)] + ["test_batch", "batches.meta"]
+        if all(os.path.isfile(os.path.join(extracted_dir, f)) for f in batch_files):
+            return True
+        else:
+            logger.info(f"   Extracted directory incomplete, re-extracting...")
+            import shutil
+            shutil.rmtree(extracted_dir, ignore_errors=True)
     if os.path.exists(cifar_tgz) and os.path.getsize(cifar_tgz) == expected_size:
         logger.info("   Extracting previously downloaded file...")
         with tarfile.open(cifar_tgz, "r:gz") as tar:
-            tar.extractall(path=ds_root)
+            tar.extractall(path=ds_root, filter='data')
         logger.info("   ✅ CIFAR-10 ready!")
         return True
     if os.path.exists(cifar_tgz):
@@ -215,7 +222,7 @@ def download_cifar10(
 
     logger.info("   Extracting...")
     with tarfile.open(cifar_tgz, "r:gz") as tar:
-        tar.extractall(path=ds_root)
+        tar.extractall(path=ds_root, filter='data')
     logger.info("✅ CIFAR-10 ready!")
     return True
 
@@ -308,8 +315,18 @@ def get_dataset_loaders(
             train_set = ds_class(root=ds_root, train=True, download=False, transform=train_transform)
             val_set = ds_class(root=ds_root, train=False, download=False, transform=val_transform)
     except (OSError, RuntimeError) as e:
-        logger.info(f"❌ Failed to load dataset: {e}")
-        return None
+        # Safety fallback: if loading fails, try with download=True
+        logger.info(f"   First load failed ({e}), retrying with download=True...")
+        try:
+            if dataset_name == "SVHN":
+                train_set = ds_class(root=ds_root, split="train", download=True, transform=train_transform)
+                val_set = ds_class(root=ds_root, split="test", download=True, transform=val_transform)
+            else:
+                train_set = ds_class(root=ds_root, train=True, download=True, transform=train_transform)
+                val_set = ds_class(root=ds_root, train=False, download=True, transform=val_transform)
+        except (OSError, RuntimeError) as e2:
+            logger.info(f"❌ Failed to load dataset: {e2}")
+            return None
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=0)

@@ -121,7 +121,7 @@ def _load_history() -> list[dict]:
     return history
 
 
-def _save_run(run_data: dict):
+def _save_run(run_data: dict) -> None:
     """Persist a completed run to disk."""
     os.makedirs(RUNS_DIR, exist_ok=True)
     fname = f"{run_data['id']}.json"
@@ -140,7 +140,7 @@ _history: list[dict] = _load_history()
 class TrainingTask:
     """Background training task with progress tracking."""
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict) -> None:
         self.id = uuid.uuid4().hex[:12]
         self.config = config
         self.status = "pending"       # pending → running → completed | failed
@@ -163,7 +163,7 @@ class TrainingTask:
         self._epoch_times: list[float] = []
         self.created_at = datetime.now()
 
-    def cancel(self):
+    def cancel(self) -> None:
         """Cancel a running training task."""
         self._cancel_requested = True
         # Kill subprocess (wget/curl) if running
@@ -177,23 +177,23 @@ class TrainingTask:
         self._emit("\n⛔ Training cancelled.")
         self._flush_logs()
 
-    def start(self):
+    def start(self) -> None:
         self.status = "running"
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
-    def _emit(self, msg: str):
+    def _emit(self, msg: str) -> None:
         """Write to both real stdout and the log buffer."""
         print(msg)
         self._log_buffer.write(msg + "\n")
 
-    def _flush_logs(self):
+    def _flush_logs(self) -> None:
         """Transfer accumulated buffer to the logs string."""
         self.logs += self._log_buffer.getvalue()
         self._log_buffer.truncate(0)
         self._log_buffer.seek(0)
 
-    def _prepare_dataset(self, dataset_name: str, data_root: str):
+    def _prepare_dataset(self, dataset_name: str, data_root: str) -> tuple | None:
         """Get (train_loader, val_loader, num_classes, in_channels) for any dataset.
 
         Returns None if preparation fails (download error, missing files, etc.).
@@ -294,7 +294,7 @@ class TrainingTask:
             return True
         return False
 
-    def _download_cifar10(self, ds_root: str, info: dict):
+    def _download_cifar10(self, ds_root: str, info: dict) -> None:
         """Optimised download for CIFAR-10 using aria2c/wget with fallback."""
         import hashlib
         import tarfile
@@ -452,7 +452,7 @@ class TrainingTask:
         self._emit("✅ CIFAR-10 ready!")
         self._flush_logs()
 
-    def _run(self):
+    def _run(self) -> None:
         """Execute the full distillation pipeline."""
         try:
             # --- Data ---
@@ -963,7 +963,7 @@ async def list_tasks():
 # Entry point
 # ---------------------------------------------------------------------------
 
-def launch(port: int = 7860, host: str = "127.0.0.1"):
+def launch(port: int = 7860, host: str = "127.0.0.1") -> None:
     """Launch the web GUI server."""
     import uvicorn
     print(f"⚡ DistilKit Web GUI")

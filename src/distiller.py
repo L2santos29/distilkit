@@ -93,7 +93,7 @@ class Distiller:
         val_loader: DataLoader | None = None,
         epochs: int = 10,
         lr: float = 1e-3,
-    ) -> dict:
+    ) -> dict[str, list[float]]:
         """Run knowledge distillation training.
 
         Args:

@@ -6,6 +6,7 @@ import os
 import sys
 
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
@@ -45,7 +46,9 @@ TEACHER_CHOICES = [
 # ---------------------------------------------------------------------------
 
 
-def _get_dataset_loaders(dataset_name: str, batch_size: int, data_root: str = "./data"):
+def _get_dataset_loaders(
+    dataset_name: str, batch_size: int, data_root: str = "./data"
+) -> tuple[DataLoader, DataLoader, int, int]:
     """Return (train_loader, val_loader, num_classes, in_channels) for any dataset."""
     import importlib
 
@@ -215,7 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def cmd_train(args: argparse.Namespace):
+def cmd_train(args: argparse.Namespace) -> nn.Module | None:
     """Run the full distillation pipeline."""
     print("=" * 60)
     print("  ⚡ DistilKit — Knowledge Distillation")
@@ -372,7 +375,7 @@ def cmd_train(args: argparse.Namespace):
     return student
 
 
-def cmd_benchmark(args: argparse.Namespace):
+def cmd_benchmark(args: argparse.Namespace) -> None:
     """Benchmark an existing model."""
     print(f"📊 Benchmarking {args.model} on {args.target}...")
 
@@ -421,7 +424,7 @@ def cmd_benchmark(args: argparse.Namespace):
         print(f"   Through : {results['throughput_imgs_per_sec']:.1f} img/s")
 
 
-def cmd_export(args: argparse.Namespace):
+def cmd_export(args: argparse.Namespace) -> None:
     """Export a trained model."""
     os.makedirs("checkpoints", exist_ok=True)
 
@@ -442,7 +445,7 @@ def cmd_export(args: argparse.Namespace):
         export_to_torchscript(model, output)
 
 
-def main():
+def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 

@@ -19,10 +19,21 @@ if [ ! -d ".venv" ]; then
 fi
 
 source .venv/bin/activate
+
+echo "📦 Installing dependencies..."
+pip install --quiet --upgrade pip
 pip install -q -r requirements.txt
 
 echo ""
-echo "🚀 Running basic distillation example..."
+echo "🚀 Running distillation via CLI..."
 echo ""
 
-python examples/basic_classifier.py
+# Use the CLI with selected options
+python -m src.cli train \
+    --teacher resnet18 \
+    --epochs 5 \
+    --temperature 4.0 \
+    --alpha 0.7 \
+    --batch-size 64 \
+    --export onnx \
+    --benchmark cpu

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=DistilKit
+Comment=Knowledge Distillation — Compress large ML models into fast deployables
+Exec=/home/l2s/Documents/GitHub-Projects/distilkit/run_gui.sh
+Icon=/home/l2s/Documents/GitHub-Projects/distilkit/assets/icon.svg
+Terminal=true
+Categories=Development;Science;AI;
+Keywords=distillation;machine-learning;pytorch;onnx
+StartupNotify=true

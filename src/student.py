@@ -104,22 +104,33 @@ class ResidualBlock(nn.Module):
         out += identity
         out = self.relu(out)
         return out
+STUDENT_REGISTRY = {
+    "MiniCNN": MiniCNN,
+    "MiniResNet": MiniResNet,
+}
 
 
 def build_student(
-    teacher: nn.Module, compression_ratio: float = 0.25, num_classes: int = 10
+    teacher: nn.Module | None = None,
+    student_type: str = "MiniCNN",
+    compression_ratio: float = 0.25,
+    num_classes: int = 10,
 ) -> nn.Module:
-    """Build a student model based on the teacher and desired compression.
+    """Build a student model by name.
 
     Args:
-        teacher: The teacher model (used to infer architecture type).
-        compression_ratio: Rough parameter count ratio (student/teacher).
+        teacher: Ignored (kept for backward compatibility).
+        student_type: Name of the student architecture.
+            Options: MiniCNN (default), MiniResNet.
+        compression_ratio: Ignored (kept for backward compatibility).
         num_classes: Number of output classes.
 
     Returns:
         Student model instance.
     """
-    # Currently supports two student architectures
-    if compression_ratio > 0.1:
-        return MiniCNN(num_classes)
-    return MiniResNet(num_classes)
+    if student_type not in STUDENT_REGISTRY:
+        raise ValueError(
+            f"Unknown student: {student_type}. "
+            f"Available: {list(STUDENT_REGISTRY.keys())}"
+        )
+    return STUDENT_REGISTRY[student_type](num_classes=num_classes)

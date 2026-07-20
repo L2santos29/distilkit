@@ -67,7 +67,7 @@ class Distiller:
         student: nn.Module,
         temperature: float = 4.0,
         alpha: float = 0.7,
-        device: str = "cuda" if torch.cuda.is_available() else "cpu",
+        device: str = "cpu"
     ):
         """Initialize distiller.
 

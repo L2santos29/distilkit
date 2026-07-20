@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DistilKit — Knowledge Distillation</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50: '#eef2ff', 100: '#e0e7ff', 200: '#c7d2fe', 300: '#a5b4fc',
+                     400: '#818cf8', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca',
+                     800: '#3730a3', 900: '#312e81', 950: '#1e1b4b' },
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    .skeleton { background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%); background-size: 200% 100%; animation: pulse 1.5s ease-in-out infinite; }
+    @keyframes pulse { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+    #logs-box::-webkit-scrollbar { width: 6px; }
+    #logs-box::-webkit-scrollbar-track { background: #1e293b; border-radius: 3px; }
+    #logs-box::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    .fade-in { animation: fadeIn 0.5s ease-in-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+
+  <!-- ═══ HEADER ═══ -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
+      <span class="text-2xl">⚡</span>
+      <h1 class="text-xl font-bold bg-gradient-to-r from-brand-400 to-purple-400 bg-clip-text text-transparent">
+        DistilKit
+      </h1>
+      <span class="text-xs text-slate-500 ml-2">Knowledge Distillation</span>
+      <span id="device-badge" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400"></span>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 py-6">
+    <div class="grid lg:grid-cols-5 gap-6">
+
+      <!-- ═══ LEFT PANEL — CONFIG ═══ -->
+      <section class="lg:col-span-2 space-y-4">
+        <div class="bg-slate-900 rounded-xl border border-slate-800 p-5 space-y-4">
+          <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide">⚙️ Configuration</h2>
+
+          <!-- Teacher -->
+          <div>
+            <label class="block text-sm font-medium text-slate-300 mb-1.5">🧠 Teacher Model</label>
+            <select id="teacher"
+              class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+            </select>
+          </div>
+
+          <!-- Student -->
+          <div>
+            <label class="block text-sm font-medium text-slate-300 mb-1.5">⚡ Student Model</label>
+            <select id="student"
+              class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+            </select>
+          </div>
+
+          <!-- Epochs -->
+          <div>
+            <div class="flex justify-between text-sm mb-1.5">
+              <label for="epochs" class="text-slate-300">📅 Epochs</label>
+              <span id="epochs-value" class="text-brand-400 font-mono">10</span>
+            </div>
+            <input id="epochs" type="range" min="1" max="50" value="10" step="1"
+                   class="w-full accent-brand-500" />
+          </div>
+
+          <!-- Temperature -->
+          <div>
+            <div class="flex justify-between text-sm mb-1.5">
+              <label for="temperature" class="text-slate-300">🌡️ Temperature</label>
+              <span id="temperature-value" class="text-brand-400 font-mono">4.0</span>
+            </div>
+            <input id="temperature" type="range" min="1" max="20" value="4" step="0.5"
+                   class="w-full accent-brand-500" />
+          </div>
+
+          <!-- Alpha -->
+          <div>
+            <div class="flex justify-between text-sm mb-1.5">
+              <label for="alpha" class="text-slate-300">⚖️ Alpha (α)</label>
+              <span id="alpha-value" class="text-brand-400 font-mono">0.70</span>
+            </div>
+            <input id="alpha" type="range" min="0" max="100" value="70" step="5"
+                   class="w-full accent-brand-500" />
+          </div>
+
+          <!-- Batch Size -->
+          <div>
+            <div class="flex justify-between text-sm mb-1.5">
+              <label for="batch-size" class="text-slate-300">📦 Batch Size</label>
+              <span id="batch-size-value" class="text-brand-400 font-mono">64</span>
+            </div>
+            <input id="batch-size" type="range" min="8" max="512" value="64" step="8"
+                   class="w-full accent-brand-500" />
+          </div>
+
+          <!-- Train Button -->
+          <button id="train-btn"
+                  class="w-full py-3 rounded-xl font-semibold text-sm transition-all duration-200
+                         bg-brand-600 hover:bg-brand-500 text-white shadow-lg shadow-brand-600/25
+                         disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-brand-600
+                         flex items-center justify-center gap-2">
+            <span id="btn-icon">🚀</span>
+            <span id="btn-text">Start Training</span>
+          </button>
+
+          <!-- Cancel button (hidden until training starts) -->
+          <button id="cancel-btn"
+                  class="w-full py-3 rounded-xl font-semibold text-sm transition-all duration-200 border
+                         bg-red-900/30 hover:bg-red-800/50 text-red-400 border-red-800
+                         hidden items-center justify-center gap-2">
+            <span>⛔</span>
+            <span>Cancel Training</span>
+          </button>
+
+          <!-- Export buttons (hidden until training completes) -->
+          <div id="export-section" class="hidden pt-2 border-t border-slate-800 space-y-2 fade-in">
+            <p class="text-xs text-slate-500 text-center">Export trained student:</p>
+            <div class="grid grid-cols-2 gap-2">
+              <button id="export-onnx-btn"
+                      class="py-2 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors">
+                📦 ONNX
+              </button>
+              <button id="export-ts-btn"
+                      class="py-2 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors">
+                📦 TorchScript
+              </button>
+            </div>
+            <p id="export-status" class="text-xs text-slate-500 text-center"></p>
+          </div>
+        </div>
+
+        <!-- Status Card -->
+        <div class="bg-slate-900 rounded-xl border border-slate-800 p-5 space-y-2">
+          <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide">📊 Status</h2>
+          <div class="space-y-1 text-sm" id="status-card">
+            <p class="text-slate-500 italic">Waiting to start...</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══ RIGHT PANEL — RESULTS ═══ -->
+      <section class="lg:col-span-3 space-y-4">
+
+        <!-- Progress bar -->
+        <div id="progress-container" class="hidden">
+          <div class="flex justify-between text-xs text-slate-400 mb-1">
+            <span id="progress-label">Progress</span>
+            <span id="progress-pct" class="font-mono">0%</span>
+          </div>
+          <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+            <div id="progress-bar" class="h-full bg-gradient-to-r from-brand-500 to-purple-500 rounded-full transition-all duration-300" style="width:0%"></div>
+          </div>
+        </div>
+
+        <!-- Chart -->
+        <div class="bg-slate-900 rounded-xl border border-slate-800 p-5">
+          <div class="flex justify-between items-center mb-3">
+            <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide">📈 Training Progress</h2>
+            <div class="flex gap-4 text-xs">
+              <span class="flex items-center gap-1.5">
+                <span class="w-3 h-0.5 rounded bg-brand-400"></span> Loss
+              </span>
+              <span class="flex items-center gap-1.5">
+                <span class="w-3 h-0.5 rounded bg-emerald-400"></span> Accuracy
+              </span>
+            </div>
+          </div>
+          <canvas id="training-chart" height="220"></canvas>
+          <div id="chart-empty" class="text-center py-16 text-slate-600">
+            <p class="text-4xl mb-2">📊</p>
+            <p class="text-sm">Run a training to see the chart</p>
+          </div>
+        </div>
+
+        <!-- Results summary -->
+        <div id="results-section" class="hidden bg-slate-900 rounded-xl border border-slate-800 p-5 fade-in">
+          <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-3">✅ Results</h2>
+          <div id="results-content"></div>
+        </div>
+
+        <!-- Logs -->
+        <div class="bg-slate-900 rounded-xl border border-slate-800 p-5">
+          <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-2">📋 Logs</h2>
+          <pre id="logs-box"
+               class="bg-slate-950 rounded-lg p-3 text-xs font-mono text-slate-400 h-40 overflow-y-auto leading-relaxed select-text">Waiting to start...</pre>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <footer class="text-center text-xs text-slate-700 py-6">
+    DistilKit · MIT License
+  </footer>
+
+  <!-- ═══ JAVASCRIPT ═══ -->
+  <script>
+    // ─── Slider bindings ───
+    function bindSlider(id) {
+      const el = document.getElementById(id);
+      const val = document.getElementById(id + '-value');
+      if (el && val) {
+        el.addEventListener('input', () => {
+          const v = el.step.includes('.') ? parseFloat(el.value).toFixed(1) : el.value;
+          val.textContent = v;
+        });
+      }
+    }
+    bindSlider('epochs');
+    bindSlider('temperature');
+    bindSlider('alpha');
+    bindSlider('batch-size');
+
+    // Fix alpha display (0-100 → 0.00-1.00)
+    document.getElementById('alpha').addEventListener('input', function() {
+      document.getElementById('alpha-value').textContent = (this.value / 100).toFixed(2);
+    });
+
+    // ─── Fetch config from API ───
+    fetch('/api/config')
+      .then(r => r.json())
+      .then(config => {
+        // Teacher dropdown
+        const teacherSel = document.getElementById('teacher');
+        config.teachers.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t;
+          opt.textContent = t;
+          if (t === 'resnet18') opt.selected = true;
+          teacherSel.appendChild(opt);
+        });
+        // Student dropdown
+        const studentSel = document.getElementById('student');
+        config.students.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s;
+          opt.textContent = s;
+          if (s === 'MiniCNN') opt.selected = true;
+          studentSel.appendChild(opt);
+        });
+        document.getElementById('device-badge').textContent = config.device;
+      });
+
+    // ─── Chart setup ───
+    const ctx = document.getElementById('training-chart').getContext('2d');
+    let chart = null;
+
+    function initChart() {
+      if (chart) { chart.destroy(); }
+      document.getElementById('chart-empty').classList.add('hidden');
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [
+            { label: 'Loss', data: [], borderColor: '#818cf8', backgroundColor: 'rgba(129,140,248,0.1)', yAxisID: 'y',
+              tension: 0.3, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2, fill: true },
+            { label: 'Accuracy', data: [], borderColor: '#34d399', backgroundColor: 'rgba(52,211,153,0.1)', yAxisID: 'y1',
+              tension: 0.3, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2, fill: true },
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: { duration: 200 },
+          interaction: { mode: 'index', intersect: false },
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { color: 'rgba(71,85,105,0.2)' }, ticks: { color: '#64748b', font: { size: 10 } } },
+            y: { position: 'left', grid: { color: 'rgba(71,85,105,0.15)' },
+                 ticks: { color: '#818cf8', font: { size: 10 } }, title: { display: true, text: 'Loss', color: '#818cf8' } },
+            y1: { position: 'right', grid: { display: false },
+                  ticks: { color: '#34d399', font: { size: 10 }, callback: v => (v * 100).toFixed(0) + '%' },
+                  title: { display: true, text: 'Accuracy', color: '#34d399' }, min: 0, max: 1 },
+          }
+        }
+      });
+    }
+
+    // ─── Utility ───
+    function $(id) { return document.getElementById(id); }
+
+    function formatNumber(n) {
+      if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
+      if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+      return n.toLocaleString();
+    }
+
+    // ─── State ───
+    let currentTaskId = null;
+    let eventSource = null;
+    let trainedStudentId = null;
+
+    function setTrainingMode(active) {
+      $('train-btn').disabled = active;
+      $('cancel-btn').classList.toggle('hidden', !active);
+      $('cancel-btn').style.display = active ? 'flex' : 'none';
+    }
+
+    // ─── Training ───
+    $('train-btn').addEventListener('click', async () => {
+      if (currentTaskId) {
+        // Disable button during training
+        return;
+      }
+
+      const config = {
+        teacher: $('teacher').value,
+        student: $('student').value,
+        epochs: parseInt($('epochs').value),
+        temperature: parseFloat($('temperature').value),
+        alpha: parseInt($('alpha').value) / 100,
+        batch_size: parseInt($('batch-size').value),
+      };
+
+      // Reset UI
+      $('btn-icon').textContent = '⏳';
+      $('btn-text').textContent = 'Training...';
+      setTrainingMode(true);
+      $('export-section').classList.add('hidden');
+      $('results-section').classList.add('hidden');
+      $('progress-container').classList.remove('hidden');
+      $('progress-bar').style.width = '0%';
+      $('progress-pct').textContent = '0%';
+      $('logs-box').textContent = '';
+      $('status-card').innerHTML = '<p class="text-brand-400">⏳ Starting training...</p>';
+
+      // Reset chart
+      if (chart) chart.destroy();
+      chart = null;
+      $('chart-empty').classList.remove('hidden');
+
+      try {
+        // Start training
+        const res = await fetch('/api/train', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(config),
+        });
+        const data = await res.json();
+        currentTaskId = data.task_id;
+
+        $('btn-text').textContent = 'Training...';
+
+        // Connect to SSE
+        eventSource = new EventSource(`/api/train/${currentTaskId}/stream`);
+
+        eventSource.onmessage = (e) => {
+          const data = JSON.parse(e.data);
+          updateUI(data);
+        };
+
+        eventSource.addEventListener('complete', (e) => {
+          const data = JSON.parse(e.data);
+          updateUI(data);
+          onTrainingComplete(data);
+        });
+
+        eventSource.addEventListener('cancel', (e) => {
+          const data = JSON.parse(e.data);
+          setTrainingMode(false);
+          $('btn-icon').textContent = '🚀';
+          $('btn-text').textContent = 'Start Training';
+          $('progress-label').textContent = '⛔ Cancelled';
+          $('status-card').innerHTML = '<p class="text-yellow-400">⛔ Training cancelled</p>';
+          currentTaskId = null;
+          eventSource.close();
+          eventSource = null;
+        });
+
+        eventSource.addEventListener('error', (e) => {
+          const data = e.data ? JSON.parse(e.data) : { error: 'Connection lost' };
+          onTrainingError(data.error || 'Connection lost');
+        });
+      } catch (err) {
+        onTrainingError(err.message);
+      }
+    });
+
+    function updateUI(data) {
+      // Progress bar
+      const pct = Math.round(data.progress * 100);
+      $('progress-bar').style.width = pct + '%';
+      $('progress-pct').textContent = pct + '%';
+
+      // If cancelled, stop
+      if (data.status === 'cancelled') return;
+
+      // Logs
+      if (data.logs) {
+        $('logs-box').textContent += data.logs;
+        $('logs-box').scrollTop = $('logs-box').scrollHeight;
+      }
+
+      // Status
+      if (data.current_epoch && data.total_epochs) {
+        let html = `
+          <div class="flex justify-between"><span class="text-slate-400">Status</span><span class="text-brand-400 font-medium capitalize">${data.status}</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">Epoch</span><span class="font-mono">${data.current_epoch} / ${data.total_epochs}</span></div>`;
+        if (data.current_loss != null) {
+          html += `<div class="flex justify-between"><span class="text-slate-400">Loss</span><span class="font-mono text-brand-400">${data.current_loss.toFixed(4)}</span></div>`;
+        }
+        if (data.current_acc != null) {
+          html += `<div class="flex justify-between"><span class="text-slate-400">Accuracy</span><span class="font-mono text-emerald-400">${(data.current_acc * 100).toFixed(2)}%</span></div>`;
+        }
+        $('status-card').innerHTML = html;
+      }
+
+      // Chart
+      if (data.losses && data.losses.length > 0) {
+        if (!chart) initChart();
+        const labels = data.losses.map((_, i) => `E${i + 1}`);
+        chart.data.labels = labels;
+        chart.data.datasets[0].data = data.losses;
+        chart.data.datasets[1].data = data.accuracies || [];
+        chart.update('none');
+      }
+    }
+
+    function onTrainingComplete(data) {
+      const r = data.result;
+      if (!r) return;
+
+      currentTaskId = null;
+      eventSource.close();
+      eventSource = null;
+      trainedStudentId = data.task_id || currentTaskId;
+
+      setTrainingMode(false);
+      $('btn-icon').textContent = '🚀';
+      $('btn-text').textContent = 'Start Training';
+      $('progress-label').textContent = '✅ Complete!';
+
+      // Status
+      $('status-card').innerHTML = `
+        <div class="flex justify-between"><span class="text-slate-400">Status</span><span class="text-emerald-400 font-medium">✅ Complete</span></div>
+        <div class="flex justify-between"><span class="text-slate-400">Final Loss</span><span class="font-mono text-brand-400">${r.final_loss}</span></div>
+        <div class="flex justify-between"><span class="text-slate-400">Final Accuracy</span><span class="font-mono text-emerald-400">${(r.final_accuracy * 100).toFixed(2)}%</span></div>
+        <div class="flex justify-between"><span class="text-slate-400">Speedup</span><span class="font-mono text-yellow-400">${r.speedup}x</span></div>`;
+
+      // Results section
+      $('results-section').classList.remove('hidden');
+      $('results-content').innerHTML = `
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-slate-500 text-xs uppercase border-b border-slate-800">
+                <th class="text-left py-2 px-3"></th>
+                <th class="text-right py-2 px-3">Parameters</th>
+                <th class="text-right py-2 px-3">Latency</th>
+                <th class="text-right py-2 px-3">Throughput</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b border-slate-800/50">
+                <td class="py-2.5 px-3 font-medium text-slate-300">🧠 ${r.teacher_name}</td>
+                <td class="text-right py-2.5 px-3 font-mono text-slate-400">${formatNumber(r.teacher_params)}</td>
+                <td class="text-right py-2.5 px-3 font-mono text-slate-400">${r.teacher_latency_ms} ms</td>
+                <td class="text-right py-2.5 px-3 font-mono text-slate-400">${r.teacher_throughput} img/s</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-3 font-medium text-slate-300">⚡ ${r.student_name}</td>
+                <td class="text-right py-2.5 px-3 font-mono text-brand-400">${formatNumber(r.student_params)}</td>
+                <td class="text-right py-2.5 px-3 font-mono text-emerald-400">${r.student_latency_ms} ms</td>
+                <td class="text-right py-2.5 px-3 font-mono text-emerald-400">${r.student_throughput} img/s</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="grid grid-cols-2 gap-3 mt-3">
+          <div class="bg-slate-800 rounded-lg p-3 text-center">
+            <p class="text-xs text-slate-500 mb-0.5">Compression</p>
+            <p class="text-lg font-bold text-brand-400">${r.compression_pct}%</p>
+            <p class="text-xs text-slate-600">smaller than teacher</p>
+          </div>
+          <div class="bg-slate-800 rounded-lg p-3 text-center">
+            <p class="text-xs text-slate-500 mb-0.5">Speedup</p>
+            <p class="text-lg font-bold text-yellow-400">${r.speedup}×</p>
+            <p class="text-xs text-slate-600">faster inference</p>
+          </div>
+        </div>`;
+
+      // Show export section
+      $('export-section').classList.remove('hidden');
+      $('export-status').textContent = '';
+    }
+
+    function onTrainingError(error) {
+      currentTaskId = null;
+      if (eventSource) { eventSource.close(); eventSource = null; }
+
+      setTrainingMode(false);
+      $('btn-icon').textContent = '🚀';
+      $('btn-text').textContent = 'Start Training';
+      $('progress-label').textContent = '❌ Failed';
+      $('progress-bar').style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
+      $('status-card').innerHTML = `<p class="text-red-400">❌ ${error}</p>`;
+      $('logs-box').textContent += '\n❌ Error: ' + error + '\n';
+    }
+
+    // ─── Export ───
+    async function exportModel(fmt) {
+      if (!trainedStudentId) {
+        $('export-status').textContent = '❌ No model to export. Train first.';
+        return;
+      }
+      $('export-status').textContent = '⏳ Exporting...';
+      try {
+        const res = await fetch(`/api/export/${trainedStudentId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ format: fmt }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          $('export-status').textContent = `✅ Exported: ${data.path}`;
+        } else {
+          $('export-status').textContent = `❌ ${data.detail || 'Export failed'}`;
+        }
+      } catch (err) {
+        $('export-status').textContent = `❌ ${err.message}`;
+      }
+    }
+
+    $('export-onnx-btn').addEventListener('click', () => exportModel('onnx'));
+    $('export-ts-btn').addEventListener('click', () => exportModel('torchscript'));
+
+    // ─── Cancel ───
+    $('cancel-btn').addEventListener('click', async () => {
+      if (!currentTaskId) return;
+      try {
+        await fetch(`/api/train/${currentTaskId}/cancel`, { method: 'POST' });
+      } catch (err) {
+        console.error('Cancel failed:', err);
+      }
+    });
+
+    // ─── Keyboard shortcut ───
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (!$('train-btn').disabled) $('train-btn').click();
+      }
+    });
+  </script>
+</body>
+</html>

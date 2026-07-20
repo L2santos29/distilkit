@@ -9,4 +9,5 @@ venv/
 *.onnx
 checkpoints/
 runs/
+data/
 .DS_Store

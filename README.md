@@ -78,12 +78,85 @@ DistilKit is a lightweight framework for **knowledge distillation** — the tech
 git clone https://github.com/L2santos29/distilkit.git
 cd distilkit
 
-# Install
+# Install dependencies
 pip install -r requirements.txt
 
-# Run a basic example
-python examples/basic_classifier.py
+# --- Option 1: CLI mode ---
+python -m src.cli train --teacher resnet18 --epochs 5
+
+# --- Option 2: GUI mode (opens browser) ---
+python -m src.webapp
+# Or: bash run_gui.sh
+
+# --- Option 3: Install as package ---
+pip install -e .
+distilkit train --teacher resnet50 --epochs 10 --export onnx --benchmark cpu
+distilkit gui
 ```
+
+---
+
+## 🖥️ CLI Mode
+
+Train, benchmark, and export models directly from the terminal.
+
+```bash
+# Full training pipeline
+distilkit train --teacher resnet50 --epochs 10 --temperature 4.0 --alpha 0.7 \
+                --batch-size 64 --export onnx --benchmark cpu
+
+# Benchmark an exported model
+distilkit benchmark --model checkpoints/student.onnx --target cpu --runs 100
+
+# Export a PyTorch checkpoint
+distilkit export --model model.pth --format onnx --output model.onnx
+
+# Launch the GUI
+distilkit gui
+```
+
+### Options for `train`
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--teacher` | `resnet18` | Teacher architecture (`resnet18`, `resnet50`, `mobilenet_v2`, `efficientnet_b0`, etc.) |
+| `--epochs` | `10` | Training epochs |
+| `--temperature` | `4.0` | Softening factor for distillation |
+| `--alpha` | `0.7` | Distillation loss weight (0-1) |
+| `--batch-size` | `64` | Batch size |
+| `--export` | `none` | Export format (`onnx`, `torchscript`, or `none`) |
+| `--benchmark` | `cpu` | Benchmark target (`cpu`, `cuda`, or `none`) |
+| `--output-dir` | `checkpoints` | Export directory |
+
+---
+
+## 🎨 GUI Mode (Web)
+
+Web-based interface built with **FastAPI** + **Tailwind CSS** + **Chart.js**.
+
+```bash
+# Launch (vía script)
+bash run_gui.sh
+
+# Launch (vía Python)
+python -m src.webapp
+
+# Launch (vía CLI instalado)
+pip install -e .
+distilkit gui
+```
+
+Opens `http://localhost:7860` in your browser with:
+
+| Feature | Description |
+|---------|-------------|
+| 🧠 **Teacher selector** | Dropdown with 8 architectures (ResNet, MobileNet, EfficientNet) |
+| ⚙️ **Hyperparameters** | Sliders for epochs, temperature, alpha, batch size |
+| 🚀 **Training** | Starts distillation, shows **live progress bar** |
+| 📈 **Chart** | Loss & accuracy curves that update in real time (Chart.js) |
+| ✅ **Results table** | Teacher vs. student comparison (params, latency, throughput) |
+| 📦 **Export** | One-click export to ONNX or TorchScript |
+| 📋 **Logs** | Full console output in a scrollable terminal
 
 ---
 
@@ -91,14 +164,19 @@ python examples/basic_classifier.py
 
 ```
 distilkit/
+├── pyproject.toml         # Package config with CLI entry points
 ├── src/
-│   ├── distiller.py     # Core distillation training loop
-│   ├── teacher.py        # Teacher model loader/wrapper
-│   ├── student.py        # Student model builder
-│   ├── benchmarks.py     # Speed/accuracy benchmarking
-│   └── onnx_export.py    # Model export utilities
+│   ├── cli.py             # CLI interface (argparse)
+│   ├── webapp.py          # Web GUI (FastAPI + Tailwind CSS)
+│   ├── templates/
+│   │   └── index.html     # Web frontend (Tailwind CSS + Chart.js)
+│   ├── distiller.py       # Core distillation training loop
+│   ├── teacher.py         # Teacher model loader
+│   ├── student.py         # Student model builder
+│   ├── benchmarks.py      # Speed/accuracy benchmarking
+│   └── onnx_export.py     # ONNX / TorchScript export utilities
 ├── examples/
-│   └── basic_classifier.py  # Full distillation example
+│   └── basic_classifier.py   # Full distillation example
 ├── tests/
 │   └── test_distiller.py
 ├── scripts/
@@ -109,7 +187,7 @@ distilkit/
 
 ---
 
-## 📊 Usage Example
+## 🐍 Python API Example
 
 ```python
 from src.distiller import Distiller

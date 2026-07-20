@@ -235,6 +235,14 @@
           <pre id="logs-box"
                class="bg-slate-950 rounded-lg p-3 text-xs font-mono text-slate-400 h-40 overflow-y-auto leading-relaxed select-text">Waiting to start...</pre>
         </div>
+
+        <!-- History -->
+        <div class="bg-slate-900 rounded-xl border border-slate-800 p-5">
+          <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide mb-3">📜 Run History</h2>
+          <div id="history-content">
+            <p class="text-sm text-slate-500 italic">Loading...</p>
+          </div>
+        </div>
       </section>
 
     </div>
@@ -633,6 +641,51 @@
         console.error('Cancel failed:', err);
       }
     });
+
+    // ─── Load run history ───
+    (async function loadHistory() {
+      try {
+        const res = await fetch('/api/history');
+        const runs = await res.json();
+        const container = document.getElementById('history-content');
+        if (!runs || runs.length === 0) {
+          container.innerHTML = '<p class="text-sm text-slate-500 italic">No runs yet. Train a model!</p>';
+          return;
+        }
+        let html = '<div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-slate-500 uppercase border-b border-slate-800">' +
+          '<th class="text-left py-1.5 px-2">When</th>' +
+          '<th class="text-left py-1.5 px-2">Dataset</th>' +
+          '<th class="text-left py-1.5 px-2">Teacher</th>' +
+          '<th class="text-right py-1.5 px-2">Student</th>' +
+          '<th class="text-right py-1.5 px-2">Params</th>' +
+          '<th class="text-right py-1.5 px-2">Acc</th>' +
+          '<th class="text-right py-1.5 px-2">Speedup</th>' +
+          '</tr></thead><tbody>';
+        runs.forEach(r => {
+          const cfg = r.config || {};
+          const res = r.result || {};
+          const status = r.status || 'completed';
+          const when = r.timestamp ? r.timestamp.slice(0, 16).replace('T', ' ') : '--';
+          const acc = res.final_accuracy != null ? (res.final_accuracy * 100).toFixed(1) + '%' : '--';
+          const speedup = res.speedup ? res.speedup + '×' : '--';
+          const params = res.student_params ? formatNumber(res.student_params) : '--';
+          const color = status === 'completed' ? 'text-slate-300' : 'text-red-400';
+          html += `<tr class="border-b border-slate-800/40 hover:bg-slate-800/30 ${color}">` +
+            `<td class="py-1.5 px-2">${when}</td>` +
+            `<td class="py-1.5 px-2">${cfg.dataset || '--'}</td>` +
+            `<td class="py-1.5 px-2">${cfg.teacher || '--'}</td>` +
+            `<td class="py-1.5 px-2">${cfg.student || '--'}</td>` +
+            `<td class="text-right py-1.5 px-2 font-mono">${params}</td>` +
+            `<td class="text-right py-1.5 px-2 font-mono text-emerald-400">${acc}</td>` +
+            `<td class="text-right py-1.5 px-2 font-mono text-yellow-400">${speedup}</td>` +
+            '</tr>';
+        });
+        html += '</tbody></table></div>';
+        container.innerHTML = html;
+      } catch (err) {
+        console.error('Failed to load history:', err);
+      }
+    })();
 
     // ─── Keyboard shortcut ───
     document.addEventListener('keydown', (e) => {

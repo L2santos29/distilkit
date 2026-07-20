@@ -100,10 +100,41 @@ HERE = Path(__file__).parent
 TEMPLATE_FILE = HERE / "templates" / "index.html"
 
 # ---------------------------------------------------------------------------
+# Run history (persisted to runs/ directory)
+# ---------------------------------------------------------------------------
+
+RUNS_DIR = "runs"
+
+
+def _load_history() -> list[dict]:
+    """Load completed runs from disk."""
+    history = []
+    if not os.path.isdir(RUNS_DIR):
+        return history
+    for fname in sorted(os.listdir(RUNS_DIR), reverse=True):
+        if fname.endswith(".json"):
+            try:
+                with open(os.path.join(RUNS_DIR, fname)) as f:
+                    history.append(json.load(f))
+            except Exception:
+                pass
+    return history
+
+
+def _save_run(run_data: dict):
+    """Persist a completed run to disk."""
+    os.makedirs(RUNS_DIR, exist_ok=True)
+    fname = f"{run_data['id']}.json"
+    with open(os.path.join(RUNS_DIR, fname), "w") as f:
+        json.dump(run_data, f, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
 # Training task manager
 # ---------------------------------------------------------------------------
 
 _tasks: dict[str, "TrainingTask"] = {}
+_history: list[dict] = _load_history()
 
 
 class TrainingTask:
@@ -413,7 +444,14 @@ class TrainingTask:
                     self._emit("❌ Dataset preparation failed.")
                 if self.status not in ("cancelled", "failed"):
                     self.status = "cancelled" if self._cancel_requested else "failed"
-                self._flush_logs()
+                    self._flush_logs()
+                    _save_run({
+                        "id": self.id,
+                        "timestamp": datetime.now().isoformat(),
+                        "config": self.config,
+                        "status": self.status,
+                        "error": self.error,
+                    })
                 return
 
             train_loader, val_loader, num_classes, in_channels = result
@@ -613,6 +651,17 @@ class TrainingTask:
             self.status = "completed"
             self.progress = 1.0
             self._emit("\n✅ Training complete!")
+            self._flush_logs()
+
+            # Persist to history
+            run = {
+                "id": self.id,
+                "timestamp": datetime.now().isoformat(),
+                "config": self.config,
+                "result": self.result,
+            }
+            _save_run(run)
+            _history.insert(0, run)
 
         except Exception as e:
             self.status = "failed"
@@ -621,6 +670,13 @@ class TrainingTask:
             tb = traceback.format_exc()
             self._emit(f"\n❌ Error: {e}")
             self._emit(tb)
+            _save_run({
+                "id": self.id,
+                "timestamp": datetime.now().isoformat(),
+                "config": self.config,
+                "status": "failed",
+                "error": str(e),
+            })
         finally:
             self._flush_logs()
 
@@ -824,6 +880,12 @@ async def cancel_training(task_id: str):
 
 
 
+
+
+@app.get("/api/history")
+async def get_history():
+    """Return all completed training runs."""
+    return _history
 
 
 @app.get("/api/download/{filename}")

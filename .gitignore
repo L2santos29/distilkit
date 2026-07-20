@@ -10,4 +10,5 @@ venv/
 checkpoints/
 runs/
 data/
+runs/
 .DS_Store

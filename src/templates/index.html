@@ -53,6 +53,14 @@
         <div class="bg-slate-900 rounded-xl border border-slate-800 p-5 space-y-4">
           <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wide">⚙️ Configuration</h2>
 
+          <!-- Dataset -->
+          <div>
+            <label class="block text-sm font-medium text-slate-300 mb-1.5">📦 Dataset</label>
+            <select id="dataset"
+              class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+            </select>
+          </div>
+
           <!-- Teacher -->
           <div>
             <label class="block text-sm font-medium text-slate-300 mb-1.5">🧠 Teacher Model</label>
@@ -238,6 +246,15 @@
     fetch('/api/config')
       .then(r => r.json())
       .then(config => {
+        // Dataset dropdown
+        const dsSel = document.getElementById('dataset');
+        config.datasets.forEach(d => {
+          const opt = document.createElement('option');
+          opt.value = d;
+          opt.textContent = d;
+          if (d === 'CIFAR-10') opt.selected = true;
+          dsSel.appendChild(opt);
+        });
         // Teacher dropdown
         const teacherSel = document.getElementById('teacher');
         config.teachers.forEach(t => {
@@ -336,6 +353,7 @@
       }
 
       const config = {
+        dataset: $('dataset').value,
         teacher: $('teacher').value,
         student: $('student').value,
         epochs: parseInt($('epochs').value),

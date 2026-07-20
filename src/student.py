@@ -14,10 +14,10 @@ class MiniCNN(nn.Module):
     meaningful compression ratios but deep enough to achieve reasonable accuracy.
     """
 
-    def __init__(self, num_classes: int = 10):
+    def __init__(self, in_channels: int = 3, num_classes: int = 10):
         super().__init__()
         self.features = nn.Sequential(
-            nn.Conv2d(3, 32, 3, padding=1),
+            nn.Conv2d(in_channels, 32, 3, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),  # 16x16
@@ -51,11 +51,11 @@ class MiniCNN(nn.Module):
 class MiniResNet(nn.Module):
     """Tiny ResNet-style student: ~2-5% the size of ResNet50."""
 
-    def __init__(self, num_classes: int = 10):
+    def __init__(self, in_channels: int = 3, num_classes: int = 10):
         super().__init__()
         self.features = nn.Sequential(
             # Initial conv
-            nn.Conv2d(3, 16, 3, padding=1, bias=False),
+            nn.Conv2d(in_channels, 16, 3, padding=1, bias=False),
             nn.BatchNorm2d(16),
             nn.ReLU(inplace=True),
 
@@ -104,6 +104,7 @@ class ResidualBlock(nn.Module):
         out += identity
         out = self.relu(out)
         return out
+
 STUDENT_REGISTRY = {
     "MiniCNN": MiniCNN,
     "MiniResNet": MiniResNet,
@@ -115,15 +116,16 @@ def build_student(
     student_type: str = "MiniCNN",
     compression_ratio: float = 0.25,
     num_classes: int = 10,
+    in_channels: int = 3,
 ) -> nn.Module:
     """Build a student model by name.
 
     Args:
         teacher: Ignored (kept for backward compatibility).
         student_type: Name of the student architecture.
-            Options: MiniCNN (default), MiniResNet.
         compression_ratio: Ignored (kept for backward compatibility).
         num_classes: Number of output classes.
+        in_channels: Number of input channels (1 for MNIST, 3 for CIFAR-10).
 
     Returns:
         Student model instance.
@@ -133,4 +135,6 @@ def build_student(
             f"Unknown student: {student_type}. "
             f"Available: {list(STUDENT_REGISTRY.keys())}"
         )
-    return STUDENT_REGISTRY[student_type](num_classes=num_classes)
+    return STUDENT_REGISTRY[student_type](
+        in_channels=in_channels, num_classes=num_classes
+    )

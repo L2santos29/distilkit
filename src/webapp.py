@@ -35,8 +35,55 @@ from src.onnx_export import export_to_onnx, export_to_torchscript
 # Constants
 # ---------------------------------------------------------------------------
 
-CIFAR_MEAN = (0.4914, 0.4822, 0.4465)
-CIFAR_STD = (0.247, 0.243, 0.261)
+# ---------------------------------------------------------------------------
+# Dataset registry
+# ---------------------------------------------------------------------------
+
+DATASETS = {
+    "CIFAR-10": {
+        "num_classes": 10,
+        "in_channels": 3,
+        "input_size": 32,
+        "mean": (0.4914, 0.4822, 0.4465),
+        "std": (0.247, 0.243, 0.261),
+        "module": "torchvision.datasets",
+        "class_name": "CIFAR10",
+        "url": "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz",
+        "md5": "c58f30108f718f92721af3b95e74349a",
+        "filename": "cifar-10-python.tar.gz",
+        "extracted_dir": "cifar-10-batches-py",
+    },
+    "MNIST": {
+        "num_classes": 10,
+        "in_channels": 1,
+        "input_size": 28,
+        "mean": (0.1307,),
+        "std": (0.3081,),
+        "module": "torchvision.datasets",
+        "class_name": "MNIST",
+    },
+    "FashionMNIST": {
+        "num_classes": 10,
+        "in_channels": 1,
+        "input_size": 28,
+        "mean": (0.2860,),
+        "std": (0.3530,),
+        "module": "torchvision.datasets",
+        "class_name": "FashionMNIST",
+    },
+    "SVHN": {
+        "num_classes": 10,
+        "in_channels": 3,
+        "input_size": 32,
+        "mean": (0.4377, 0.4438, 0.4728),
+        "std": (0.1980, 0.2010, 0.1970),
+        "module": "torchvision.datasets",
+        "class_name": "SVHN",
+        "extra_train": True,  # SVHN has an extra training set
+    },
+}
+
+DATASET_CHOICES = list(DATASETS.keys())
 TEACHER_CHOICES = [
     "resnet18", "resnet34", "resnet50", "resnet101",
     "mobilenet_v2", "mobilenet_v3_large",
@@ -113,72 +160,130 @@ class TrainingTask:
         self._log_buffer.truncate(0)
         self._log_buffer.seek(0)
 
-    def _download_and_extract_cifar10(self, data_root: str) -> bool:
-        """Download + extract CIFAR-10. Tries aria2c, mirrors, wget, curl, Python."""
+    def _prepare_dataset(self, dataset_name: str, data_root: str):
+        """Get (train_loader, val_loader, num_classes, in_channels) for any dataset.
+
+        CIFAR-10 uses the optimised download (aria2c/wget with mirrors).
+        MNIST, FashionMNIST, SVHN use torchvision's built-in download (fast enough).
+        """
+        info = DATASETS[dataset_name]
+        ds_class = getattr(datasets, info["class_name"])
+        num_classes = info["num_classes"]
+        in_channels = info["in_channels"]
+        input_size = info["input_size"]
+        mean, std = info["mean"], info["std"]
+        ds_root = os.path.join(data_root, dataset_name)
+        os.makedirs(ds_root, exist_ok=True)
+
+        # ── Download (optimised for CIFAR-10) ──
+        if dataset_name == "CIFAR-10":
+            self._download_cifar10(ds_root, info)
+        else:
+            self._emit(f"⬇️ Downloading {dataset_name}...")
+            self._flush_logs()
+            # torchvision handles download natively — just call the constructor
+
+        # ── Transforms ──
+        if input_size <= 32:
+            # Small images: random crop + flip (only for train)
+            train_transform = transforms.Compose([
+                transforms.RandomCrop(input_size, padding=4 if input_size >= 28 else 2),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ])
+        else:
+            train_transform = transforms.Compose([
+                transforms.Resize(32),
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ])
+
+        val_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std),
+        ])
+
+        # ── Load datasets ──
+        download = dataset_name != "CIFAR-10"  # CIFAR-10 is already downloaded above
+
+        train_set = ds_class(
+            root=ds_root, train=True, download=download, transform=train_transform
+        )
+        val_set = ds_class(
+            root=ds_root, train=False, download=download, transform=val_transform
+        )
+
+        # SVHN uses 'split' instead of 'train'
+        if dataset_name == "SVHN":
+            train_set = ds_class(
+                root=ds_root, split="train", download=download, transform=train_transform
+            )
+            val_set = ds_class(
+                root=ds_root, split="test", download=download, transform=val_transform
+            )
+
+        train_loader = DataLoader(
+            train_set, batch_size=self.config["batch_size"],
+            shuffle=True, num_workers=2
+        )
+        val_loader = DataLoader(
+            val_set, batch_size=self.config["batch_size"],
+            shuffle=False, num_workers=2
+        )
+
+        return train_loader, val_loader, num_classes, in_channels
+
+    def _download_cifar10(self, ds_root: str, info: dict):
+        """Optimised download for CIFAR-10 using aria2c/wget with fallback."""
         import hashlib
         import tarfile
 
         cifar_urls = [
-            # Primary — University of Toronto
             "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz",
-            # Mirror — Oxford Robotics
             "https://thor.robots.ox.ac.uk/pascal/data/cifar10/cifar-10-python.tar.gz",
         ]
-        cifar_tgz = os.path.join(data_root, "cifar-10-python.tar.gz")
-        extracted_dir = os.path.join(data_root, "cifar-10-batches-py")
-        expected_md5 = "c58f30108f718f92721af3b95e74349a"
+        cifar_tgz = os.path.join(ds_root, info["filename"])
+        extracted_dir = os.path.join(ds_root, info["extracted_dir"])
         expected_size = 170_498_071
-        os.makedirs(data_root, exist_ok=True)
+        os.makedirs(ds_root, exist_ok=True)
 
-        # Already extracted
         if os.path.isdir(extracted_dir):
-            return True
-
-        # Valid tar.gz from a previous attempt — just extract
+            return
         if os.path.exists(cifar_tgz) and os.path.getsize(cifar_tgz) == expected_size:
             self._emit("   Extracting previously downloaded file...")
             self._flush_logs()
             with tarfile.open(cifar_tgz, "r:gz") as tar:
-                tar.extractall(path=data_root)
+                tar.extractall(path=ds_root)
             self._emit("   ✅ CIFAR-10 ready!")
             self._flush_logs()
-            return True
-
-        # Delete partial file
+            return
         if os.path.exists(cifar_tgz):
-            old_size = os.path.getsize(cifar_tgz)
-            self._emit(f"   Removing partial download ({old_size/1e6:.0f} MB)...")
+            self._emit(f"   Removing partial download ({os.path.getsize(cifar_tgz)/1e6:.0f} MB)...")
             os.remove(cifar_tgz)
 
         self._emit("⬇️ Downloading CIFAR-10 (170 MB)...")
         self._flush_logs()
 
-        # --- Detect available download tools (ordered by speed) ---
-        has_aria2c = (
-            subprocess.run(["which", "aria2c"], capture_output=True).returncode == 0
-        )
-        has_wget = (
-            subprocess.run(["which", "wget"], capture_output=True).returncode == 0
-        )
-        has_curl = (
-            subprocess.run(["which", "curl"], capture_output=True).returncode == 0
-        )
+        has_aria2c = subprocess.run(["which", "aria2c"], capture_output=True).returncode == 0
+        has_wget = subprocess.run(["which", "wget"], capture_output=True).returncode == 0
+        has_curl = subprocess.run(["which", "curl"], capture_output=True).returncode == 0
 
-        # --- Try each URL with the fastest available tool ---
         downloaded_ok = False
         for url in cifar_urls:
             if self._cancel_requested:
-                return False
+                return
             if downloaded_ok:
                 break
 
             if has_aria2c:
-                self._emit(f"   Trying aria2c (4 connections)...")
+                self._emit("   Trying aria2c (4 connections)...")
                 self._flush_logs()
                 self._subprocess = subprocess.Popen([
                     "aria2c", "-x", "4", "-s", "4",
-                    "-d", data_root, "-o", "cifar-10-python.tar.gz",
-                    url,
+                    "-d", ds_root, "-o", info["filename"], url,
                 ])
                 self._subprocess.wait()
                 self._subprocess = None
@@ -186,10 +291,10 @@ class TrainingTask:
                     downloaded_ok = True
                     break
                 if self._cancel_requested:
-                    return False
+                    return
 
             if has_wget:
-                self._emit(f"   Trying wget...")
+                self._emit("   Trying wget...")
                 self._flush_logs()
                 self._subprocess = subprocess.Popen([
                     "wget", "-O", cifar_tgz, "--show-progress", url,
@@ -200,10 +305,10 @@ class TrainingTask:
                     downloaded_ok = True
                     break
                 if self._cancel_requested:
-                    return False
+                    return
 
-            if has_curl and not downloaded_ok:
-                self._emit(f"   Trying curl...")
+            if has_curl:
+                self._emit("   Trying curl...")
                 self._flush_logs()
                 self._subprocess = subprocess.Popen([
                     "curl", "-#", "-Lo", cifar_tgz, url,
@@ -214,36 +319,31 @@ class TrainingTask:
                     downloaded_ok = True
                     break
                 if self._cancel_requested:
-                    return False
+                    return
 
-        # --- Pure Python fallback ---
         if not downloaded_ok:
             import urllib.request
             self._emit("   Trying Python (fallback)...")
             self._flush_logs()
             for url in cifar_urls:
                 if self._cancel_requested:
-                    return False
+                    return
                 try:
-                    req = urllib.request.Request(url, headers={
-                        "User-Agent": "Mozilla/5.0"
-                    })
-                    response = urllib.request.urlopen(req)
-                    total = int(response.headers.get("Content-Length", expected_size))
-                    downloaded = 0
-                    chunk_size = 8192
+                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                    resp = urllib.request.urlopen(req)
+                    total = int(resp.headers.get("Content-Length", expected_size))
+                    downloaded, chunk = 0, 8192
                     with open(cifar_tgz, "wb") as f:
                         while True:
                             if self._cancel_requested:
-                                return False
-                            chunk = response.read(chunk_size)
-                            if not chunk:
+                                return
+                            data = resp.read(chunk)
+                            if not data:
                                 break
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            if downloaded % (chunk_size * 200) == 0:
-                                pct = min(downloaded / total * 100, 100)
-                                self._emit(f"   {pct:.0f}% ({downloaded/1e6:.0f}/{total/1e6:.0f} MB)")
+                            f.write(data)
+                            downloaded += len(data)
+                            if downloaded % (chunk * 200) == 0:
+                                self._emit(f"   {min(downloaded/total*100,100):.0f}% ({downloaded/1e6:.0f}/{total/1e6:.0f} MB)")
                     if os.path.getsize(cifar_tgz) == expected_size:
                         downloaded_ok = True
                         break
@@ -253,74 +353,51 @@ class TrainingTask:
 
         if not downloaded_ok:
             self._emit("❌ Could not download from any server.")
-            return False
+            self.status = "failed"
+            self._flush_logs()
+            return
 
-        if self._cancel_requested:
-            return False
-
-        # --- Verify MD5 ---
-        self._emit("   Verifying integrity...")
-        self._flush_logs()
         md5_actual = hashlib.md5(open(cifar_tgz, "rb").read()).hexdigest()
-        if md5_actual != expected_md5:
-            self._emit(f"   ⚠️  MD5 mismatch — file may be corrupted, will retry next time.")
+        if md5_actual != info["md5"]:
+            self._emit("⚠️  MD5 mismatch — file corrupted, will retry next time.")
             os.remove(cifar_tgz)
-            return False
+            self.status = "failed"
+            self._flush_logs()
+            return
 
-        # --- Extract ---
         self._emit("   Extracting...")
         self._flush_logs()
         with tarfile.open(cifar_tgz, "r:gz") as tar:
-            tar.extractall(path=data_root)
-
-        self._emit("   ✅ CIFAR-10 ready!")
+            tar.extractall(path=ds_root)
+        self._emit("✅ CIFAR-10 ready!")
         self._flush_logs()
-        return True
 
     def _run(self):
         """Execute the full distillation pipeline."""
         try:
             # --- Data ---
+            dataset_name = self.config.get("dataset", "CIFAR-10")
             self.progress = 0.02
-            self._emit("📦 Preparing CIFAR-10...")
+            self._emit(f"📦 Preparing {dataset_name}...")
 
-            if not self._download_and_extract_cifar10("./data"):
+            result = self._prepare_dataset(dataset_name, "./data")
+            if result is None:
                 if self._cancel_requested:
-                    self._emit("⛔ Cancelled during download.")
+                    self._emit("⛔ Cancelled.")
                 else:
-                    self._emit("❌ Download failed.")
-                self.status = "cancelled" if self._cancel_requested else "failed"
+                    self._emit("❌ Dataset preparation failed.")
+                if self.status not in ("cancelled", "failed"):
+                    self.status = "cancelled" if self._cancel_requested else "failed"
                 self._flush_logs()
                 return
 
-            transform_train = transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize(CIFAR_MEAN, CIFAR_STD),
-            ])
-            transform_val = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize(CIFAR_MEAN, CIFAR_STD),
-            ])
-            train_set = datasets.CIFAR10(
-                root="./data", train=True, download=False, transform=transform_train
-            )
-            val_set = datasets.CIFAR10(
-                root="./data", train=False, download=False, transform=transform_val
-            )
-            train_loader = DataLoader(
-                train_set, batch_size=self.config["batch_size"], shuffle=True, num_workers=2
-            )
-            val_loader = DataLoader(
-                val_set, batch_size=self.config["batch_size"], shuffle=False, num_workers=2
-            )
+            train_loader, val_loader, num_classes, in_channels = result
             self._flush_logs()
 
             # --- Teacher ---
             self.progress = 0.10
             self._emit(f"🧠 Loading teacher ({self.config['teacher']})...")
-            teacher = load_teacher(self.config["teacher"], num_classes=10)
+            teacher = load_teacher(self.config["teacher"], num_classes=num_classes)
             teacher.to(DEVICE).eval()
             teacher_params = sum(p.numel() for p in teacher.parameters())
             self._emit(f"   Teacher parameters: {teacher_params:,}")
@@ -331,7 +408,9 @@ class TrainingTask:
             student_name = self.config.get("student", "MiniCNN")
             self._emit(f"🔧 Building student ({student_name})...")
             student = build_student(
-                student_type=student_name, num_classes=10
+                student_type=student_name,
+                num_classes=num_classes,
+                in_channels=in_channels,
             )
             student.to(DEVICE)
             student_params = sum(p.numel() for p in student.parameters())
@@ -445,6 +524,7 @@ class TrainingTask:
                 "final_accuracy": round(self.accuracies[-1], 4),
                 "losses": [round(l, 4) for l in self.losses],
                 "accuracies": [round(a, 4) for a in self.accuracies],
+                "dataset": self.config.get("dataset", "CIFAR-10"),
                 "teacher_name": self.config["teacher"],
                 "student_name": self.config.get("student", "MiniCNN"),
             }
@@ -502,6 +582,7 @@ async def index():
 async def start_training(body: dict):
     """Start a new distillation task."""
     config = {
+        "dataset": body.get("dataset", "CIFAR-10"),
         "teacher": body.get("teacher", "resnet18"),
         "student": body.get("student", "MiniCNN"),
         "epochs": int(body.get("epochs", 10)),
@@ -510,6 +591,8 @@ async def start_training(body: dict):
         "batch_size": int(body.get("batch_size", 64)),
     }
 
+    if config["dataset"] not in DATASETS:
+        raise HTTPException(400, f"Invalid dataset. Choose: {DATASET_CHOICES}")
     if config["teacher"] not in TEACHER_CHOICES:
         raise HTTPException(400, f"Invalid teacher. Choose: {TEACHER_CHOICES}")
     if config["student"] not in STUDENT_CHOICES:
@@ -632,6 +715,7 @@ async def export_model(task_id: str, body: dict):
 async def get_config():
     """Return app configuration (teachers list, device)."""
     return {
+        "datasets": DATASET_CHOICES,
         "teachers": TEACHER_CHOICES,
         "students": STUDENT_CHOICES,
         "device": DEVICE,

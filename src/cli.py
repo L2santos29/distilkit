@@ -19,8 +19,20 @@ from src.onnx_export import export_to_onnx, export_to_torchscript
 # Constants
 # ---------------------------------------------------------------------------
 
-CIFAR_MEAN = (0.4914, 0.4822, 0.4465)
-CIFAR_STD = (0.247, 0.243, 0.261)
+DATASETS = {
+    "CIFAR-10": {"num_classes": 10, "in_channels": 3, "input_size": 32,
+                 "mean": (0.4914, 0.4822, 0.4465), "std": (0.247, 0.243, 0.261),
+                 "class": "CIFAR10"},
+    "MNIST": {"num_classes": 10, "in_channels": 1, "input_size": 28,
+               "mean": (0.1307,), "std": (0.3081,), "class": "MNIST"},
+    "FashionMNIST": {"num_classes": 10, "in_channels": 1, "input_size": 28,
+                      "mean": (0.2860,), "std": (0.3530,), "class": "FashionMNIST"},
+    "SVHN": {"num_classes": 10, "in_channels": 3, "input_size": 32,
+              "mean": (0.4377, 0.4438, 0.4728), "std": (0.1980, 0.2010, 0.1970),
+              "class": "SVHN"},
+}
+
+DATASET_CHOICES = ["CIFAR-10", "MNIST", "FashionMNIST", "SVHN"]
 
 TEACHER_CHOICES = [
     "resnet18", "resnet34", "resnet50", "resnet101",
@@ -33,56 +45,41 @@ TEACHER_CHOICES = [
 # ---------------------------------------------------------------------------
 
 
-def _download_cifar10(data_root: str = "./data"):
-    """Download CIFAR-10 using wget/curl if available (faster than urllib)."""
-    import subprocess
+def _get_dataset_loaders(dataset_name: str, batch_size: int, data_root: str = "./data"):
+    """Return (train_loader, val_loader, num_classes, in_channels) for any dataset."""
+    import importlib
 
-    cifar_url = "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz"
-    cifar_tgz = os.path.join(data_root, "cifar-10-python.tar.gz")
-    os.makedirs(data_root, exist_ok=True)
+    info = DATASETS[dataset_name]
+    ds_module = importlib.import_module("torchvision.datasets")
+    ds_class = getattr(ds_module, info["class"])
+    ds_root = os.path.join(data_root, dataset_name)
+    os.makedirs(ds_root, exist_ok=True)
 
-    if os.path.exists(cifar_tgz):
-        return
-
-    wget_ok = subprocess.run(
-        ["which", "wget"], capture_output=True
-    ).returncode == 0
-    curl_ok = subprocess.run(
-        ["which", "curl"], capture_output=True
-    ).returncode == 0
-
-    if wget_ok:
-        print("⬇️ Downloading CIFAR-10 with wget (fast)...")
-        subprocess.run(["wget", "-O", cifar_tgz, cifar_url], check=True)
-    elif curl_ok:
-        print("⬇️ Downloading CIFAR-10 with curl...")
-        subprocess.run(["curl", "-Lo", cifar_tgz, cifar_url], check=True)
-    else:
-        print("⬇️ Downloading CIFAR-10 (urllib — speed may vary)...")
-
-
-def _get_cifar10_loaders(batch_size: int, data_root: str = "./data"):
-    """Return (train_loader, val_loader) for CIFAR-10."""
-    _download_cifar10(data_root)
+    mean, std = info["mean"], info["std"]
+    input_size = info["input_size"]
 
     transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
+        transforms.RandomCrop(input_size, padding=4 if input_size >= 28 else 2),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize(CIFAR_MEAN, CIFAR_STD),
+        transforms.Normalize(mean, std),
     ])
     transform_val = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize(CIFAR_MEAN, CIFAR_STD),
+        transforms.Normalize(mean, std),
     ])
 
-    train_set = datasets.CIFAR10(
-        root=data_root, train=True, download=True, transform=transform_train
-    )
-    val_set = datasets.CIFAR10(
-        root=data_root, train=False, download=True, transform=transform_val
-    )
+    download = True
+    if dataset_name == "SVHN":
+        train_set = ds_class(root=ds_root, split="train", download=download, transform=transform_train)
+        val_set = ds_class(root=ds_root, split="test", download=download, transform=transform_val)
+    else:
+        train_set = ds_class(root=ds_root, train=True, download=download, transform=transform_train)
+        val_set = ds_class(root=ds_root, train=False, download=download, transform=transform_val)
 
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=2)
+    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=2)
+    return train_loader, val_loader, info["num_classes"], info["in_channels"]
     train_loader = DataLoader(
         train_set, batch_size=batch_size, shuffle=True, num_workers=2
     )
@@ -118,6 +115,10 @@ def build_parser() -> argparse.ArgumentParser:
     # ---- train ----
     train_parser = subparsers.add_parser(
         "train", help="Run knowledge distillation (teacher → student)"
+    )
+    train_parser.add_argument(
+        "--dataset", default="CIFAR-10", choices=DATASET_CHOICES,
+        help="Dataset to use (default: CIFAR-10)",
     )
     train_parser.add_argument(
         "--teacher", default="resnet18", choices=TEACHER_CHOICES,
@@ -203,6 +204,7 @@ def cmd_train(args: argparse.Namespace):
     print("=" * 60)
     print("  ⚡ DistilKit — Knowledge Distillation")
     print("=" * 60)
+    print(f"  Dataset     : {args.dataset}")
     print(f"  Teacher     : {args.teacher}")
     print(f"  Epochs      : {args.epochs}")
     print(f"  Temperature : {args.temperature}")
@@ -212,18 +214,24 @@ def cmd_train(args: argparse.Namespace):
     print()
 
     # 1. Data
-    print("📦 Loading CIFAR-10...")
-    train_loader, val_loader = _get_cifar10_loaders(args.batch_size, args.data_dir)
+    print(f"📦 Loading {args.dataset}...")
+    train_loader, val_loader, num_classes, in_channels = _get_dataset_loaders(
+        args.dataset, args.batch_size, args.data_dir
+    )
 
     # 2. Teacher
     print(f"🧠 Loading teacher ({args.teacher})...")
-    teacher = load_teacher(args.teacher, num_classes=10)
+    teacher = load_teacher(args.teacher, num_classes=num_classes)
     teacher_params = sum(p.numel() for p in teacher.parameters())
     print(f"   Parameters: {teacher_params:,}")
 
     # 3. Student
     print("🔧 Building student...")
-    student = build_student(teacher, compression_ratio=0.25, num_classes=10)
+    student = build_student(
+        student_type="MiniCNN",
+        num_classes=num_classes,
+        in_channels=in_channels,
+    )
     student_params = sum(p.numel() for p in student.parameters())
     print(f"   Parameters: {student_params:,}")
     print(f"   Compression: {student_params / teacher_params:.2%} of teacher size")

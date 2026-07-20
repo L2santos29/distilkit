@@ -268,6 +268,11 @@ def get_dataset_loaders(
             has_files = _check_torchvision_dataset(dataset_name, ds_root)
             if not has_files:
                 logger.info(f"⬇️ Downloading {dataset_name}...")
+                # Trigger download by instantiating with download=True
+                if dataset_name == "SVHN":
+                    ds_class(root=ds_root, split="train", download=True)
+                else:
+                    ds_class(root=ds_root, train=True, download=True)
     except (OSError, IOError, RuntimeError) as e:
         logger.info(f"❌ Dataset I/O error: {e}")
         return None

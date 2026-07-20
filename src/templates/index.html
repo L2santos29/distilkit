@@ -491,10 +491,10 @@
       const r = data.result;
       if (!r) return;
 
+      trainedStudentId = currentTaskId;  // save BEFORE nullifying
       currentTaskId = null;
       eventSource.close();
       eventSource = null;
-      trainedStudentId = data.task_id || currentTaskId;
 
       setTrainingMode(false);
       $('btn-icon').textContent = '🚀';
@@ -583,7 +583,14 @@
         });
         const data = await res.json();
         if (res.ok) {
-          $('export-status').textContent = `✅ Exported: ${data.path}`;
+          // Trigger browser download
+          const a = document.createElement('a');
+          a.href = `/api/download/${data.filename}`;
+          a.download = data.filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          $('export-status').textContent = `✅ Downloaded: ${data.filename}`;
         } else {
           $('export-status').textContent = `❌ ${data.detail || 'Export failed'}`;
         }

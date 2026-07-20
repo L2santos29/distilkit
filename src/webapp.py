@@ -778,14 +778,21 @@ async def export_model(task_id: str, body: dict):
     fmt = body.get("format", "onnx")
     os.makedirs("checkpoints", exist_ok=True)
 
+    # Unique filename with dataset + model info
+    cfg = task.config
+    tag = f"{cfg.get('dataset', 'dataset')}_{cfg.get('student', 'student')}"
+    ext = "onnx" if fmt == "onnx" else "pt"
+    filename = f"distilkit_{tag}.{ext}"
+    filepath = os.path.join("checkpoints", filename)
+
     try:
         if fmt == "onnx":
-            path = export_to_onnx(task.student, "checkpoints/student.onnx")
+            export_to_onnx(task.student, filepath)
         elif fmt == "torchscript":
-            path = export_to_torchscript(task.student, "checkpoints/student.pt")
+            export_to_torchscript(task.student, filepath)
         else:
             raise HTTPException(400, "Invalid format. Use 'onnx' or 'torchscript'")
-        return {"path": str(path), "format": fmt}
+        return {"filename": filename, "path": filepath, "format": fmt}
     except Exception as e:
         raise HTTPException(500, f"Export failed: {e}")
 
@@ -814,6 +821,24 @@ async def cancel_training(task_id: str):
 
 
 
+
+
+@app.get("/api/download/{filename}")
+async def download_file(filename: str):
+    """Download an exported model file."""
+    from fastapi.responses import FileResponse
+
+    safe_path = os.path.join("checkpoints", os.path.basename(filename))
+    if not os.path.exists(safe_path):
+        raise HTTPException(404, f"File not found: {filename}")
+    return FileResponse(
+        safe_path,
+        media_type="application/octet-stream",
+        filename=filename,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        },
+    )
 
 
 @app.get("/api/tasks")

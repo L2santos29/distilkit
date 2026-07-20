@@ -163,8 +163,7 @@ class TrainingTask:
     def _prepare_dataset(self, dataset_name: str, data_root: str):
         """Get (train_loader, val_loader, num_classes, in_channels) for any dataset.
 
-        CIFAR-10 uses the optimised download (aria2c/wget with mirrors).
-        MNIST, FashionMNIST, SVHN use torchvision's built-in download (fast enough).
+        Returns None if preparation fails (download error, missing files, etc.).
         """
         info = DATASETS[dataset_name]
         ds_class = getattr(datasets, info["class_name"])
@@ -175,17 +174,29 @@ class TrainingTask:
         ds_root = os.path.join(data_root, dataset_name)
         os.makedirs(ds_root, exist_ok=True)
 
-        # ── Download (optimised for CIFAR-10) ──
-        if dataset_name == "CIFAR-10":
-            self._download_cifar10(ds_root, info)
-        else:
-            self._emit(f"⬇️ Downloading {dataset_name}...")
+        # ── Verify / Download ──
+        try:
+            if dataset_name == "CIFAR-10":
+                self._download_cifar10(ds_root, info)
+                # After download attempt, verify extraction exists
+                extracted = os.path.join(ds_root, info["extracted_dir"])
+                if not os.path.isdir(extracted):
+                    self._emit("❌ CIFAR-10 data not found after download.")
+                    self._flush_logs()
+                    return None
+            else:
+                # For MNIST/FashionMNIST/SVHN, check if already downloaded first
+                has_files = self._check_torchvision_dataset(dataset_name, ds_root, info)
+                if not has_files:
+                    self._emit(f"⬇️ Downloading {dataset_name}...")
+                    self._flush_logs()
+        except (OSError, IOError, RuntimeError) as e:
+            self._emit(f"❌ Dataset I/O error: {e}")
             self._flush_logs()
-            # torchvision handles download natively — just call the constructor
+            return None
 
         # ── Transforms ──
         if input_size <= 32:
-            # Small images: random crop + flip (only for train)
             train_transform = transforms.Compose([
                 transforms.RandomCrop(input_size, padding=4 if input_size >= 28 else 2),
                 transforms.RandomHorizontalFlip(),
@@ -207,34 +218,48 @@ class TrainingTask:
         ])
 
         # ── Load datasets ──
-        download = dataset_name != "CIFAR-10"  # CIFAR-10 is already downloaded above
-
-        train_set = ds_class(
-            root=ds_root, train=True, download=download, transform=train_transform
-        )
-        val_set = ds_class(
-            root=ds_root, train=False, download=download, transform=val_transform
-        )
-
-        # SVHN uses 'split' instead of 'train'
-        if dataset_name == "SVHN":
-            train_set = ds_class(
-                root=ds_root, split="train", download=download, transform=train_transform
-            )
-            val_set = ds_class(
-                root=ds_root, split="test", download=download, transform=val_transform
-            )
+        try:
+            if dataset_name == "SVHN":
+                train_set = ds_class(
+                    root=ds_root, split="train", download=False, transform=train_transform
+                )
+                val_set = ds_class(
+                    root=ds_root, split="test", download=False, transform=val_transform
+                )
+            else:
+                train_set = ds_class(
+                    root=ds_root, train=True, download=False, transform=train_transform
+                )
+                val_set = ds_class(
+                    root=ds_root, train=False, download=False, transform=val_transform
+                )
+        except (OSError, RuntimeError) as e:
+            self._emit(f"❌ Failed to load dataset: {e}")
+            self._flush_logs()
+            return None
 
         train_loader = DataLoader(
             train_set, batch_size=self.config["batch_size"],
-            shuffle=True, num_workers=2
+            shuffle=True, num_workers=0  # 0 to avoid file-lock issues
         )
         val_loader = DataLoader(
             val_set, batch_size=self.config["batch_size"],
-            shuffle=False, num_workers=2
+            shuffle=False, num_workers=0
         )
 
         return train_loader, val_loader, num_classes, in_channels
+
+    def _check_torchvision_dataset(self, name: str, root: str, info: dict) -> bool:
+        """Check if a torchvision dataset's raw files exist on disk."""
+        raw_dir = os.path.join(root, "raw")
+        if os.path.isdir(raw_dir) and len(os.listdir(raw_dir)) > 0:
+            return True
+        # Also check processed/
+        processed_dir = os.path.join(root, info["class_name"] if name != "SVHN" else "".join(c for c in name if c.isalnum()), "processed")
+        processed_dir = os.path.join(root, "processed")
+        if os.path.isdir(processed_dir) and len(os.listdir(processed_dir)) > 0:
+            return True
+        return False
 
     def _download_cifar10(self, ds_root: str, info: dict):
         """Optimised download for CIFAR-10 using aria2c/wget with fallback."""

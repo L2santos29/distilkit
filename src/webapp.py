@@ -433,7 +433,9 @@ class TrainingTask:
             student_name = self.config.get("student", "MiniCNN")
             self._emit(f"🔧 Building student ({student_name})...")
             student = build_student(
+                teacher=teacher,
                 student_type=student_name,
+                compression_ratio=self.config.get("compression_ratio", 0.05),
                 num_classes=num_classes,
                 in_channels=in_channels,
             )
@@ -663,6 +665,7 @@ async def start_training(body: dict):
         "dataset": body.get("dataset", "CIFAR-10"),
         "teacher": body.get("teacher", "resnet18"),
         "student": body.get("student", "MiniCNN"),
+        "compression_ratio": float(body.get("compression_ratio", 0.05)),
         "epochs": int(body.get("epochs", 10)),
         "temperature": float(body.get("temperature", 4.0)),
         "alpha": float(body.get("alpha", 0.7)),

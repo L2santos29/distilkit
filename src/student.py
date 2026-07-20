@@ -8,38 +8,43 @@ import torch.nn as nn
 
 
 class MiniCNN(nn.Module):
-    """Lightweight CNN suitable as a student for ResNet teachers on small datasets.
+    """Lightweight CNN with configurable width for compression control.
 
-    Designed for datasets like CIFAR-10, MNIST. Small enough to show
-    meaningful compression ratios but deep enough to achieve reasonable accuracy.
+    Width multiplier scales all channel counts. width=1.0 is the default.
+    width=0.5 halves the parameters (~4x fewer), width=2.0 doubles them.
     """
 
-    def __init__(self, in_channels: int = 3, num_classes: int = 10):
+    def __init__(self, in_channels: int = 3, num_classes: int = 10, width: float = 1.0):
         super().__init__()
+        w = width
+        c1, c2, c3, c4 = [int(32 * w), int(64 * w), int(128 * w), int(256 * w)]
+        # Ensure at least 1 channel per layer
+        c1, c2, c3, c4 = max(c1, 1), max(c2, 1), max(c3, 1), max(c4, 1)
+
         self.features = nn.Sequential(
-            nn.Conv2d(in_channels, 32, 3, padding=1),
-            nn.BatchNorm2d(32),
+            nn.Conv2d(in_channels, c1, 3, padding=1),
+            nn.BatchNorm2d(c1),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),  # 16x16
+            nn.MaxPool2d(2),
 
-            nn.Conv2d(32, 64, 3, padding=1),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(c1, c2, 3, padding=1),
+            nn.BatchNorm2d(c2),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),  # 8x8
+            nn.MaxPool2d(2),
 
-            nn.Conv2d(64, 128, 3, padding=1),
-            nn.BatchNorm2d(128),
+            nn.Conv2d(c2, c3, 3, padding=1),
+            nn.BatchNorm2d(c3),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),  # 4x4
+            nn.MaxPool2d(2),
 
-            nn.Conv2d(128, 256, 3, padding=1),
-            nn.BatchNorm2d(256),
+            nn.Conv2d(c3, c4, 3, padding=1),
+            nn.BatchNorm2d(c4),
             nn.ReLU(inplace=True),
-            nn.AdaptiveAvgPool2d((1, 1)),  # 1x1
+            nn.AdaptiveAvgPool2d((1, 1)),
         )
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(256, num_classes),
+            nn.Linear(c4, num_classes),
         )
 
     def forward(self, x):
@@ -49,32 +54,28 @@ class MiniCNN(nn.Module):
 
 
 class MiniResNet(nn.Module):
-    """Tiny ResNet-style student: ~2-5% the size of ResNet50."""
+    """Tiny ResNet-style student with configurable width."""
 
-    def __init__(self, in_channels: int = 3, num_classes: int = 10):
+    def __init__(self, in_channels: int = 3, num_classes: int = 10, width: float = 1.0):
         super().__init__()
+        w = width
+        c1, c2 = int(16 * w), int(32 * w)
+        c1, c2 = max(c1, 1), max(c2, 1)
+
         self.features = nn.Sequential(
-            # Initial conv
-            nn.Conv2d(in_channels, 16, 3, padding=1, bias=False),
-            nn.BatchNorm2d(16),
+            nn.Conv2d(in_channels, c1, 3, padding=1, bias=False),
+            nn.BatchNorm2d(c1),
             nn.ReLU(inplace=True),
-
-            # Block 1
-            ResidualBlock(16, 16),
-            ResidualBlock(16, 16),
-
-            # Downsample
-            nn.Conv2d(16, 32, 3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(32),
+            ResidualBlock(c1, c1),
+            ResidualBlock(c1, c1),
+            nn.Conv2d(c1, c2, 3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(c2),
             nn.ReLU(inplace=True),
-
-            # Block 2
-            ResidualBlock(32, 32),
-            ResidualBlock(32, 32),
-
+            ResidualBlock(c2, c2),
+            ResidualBlock(c2, c2),
             nn.AdaptiveAvgPool2d((1, 1)),
         )
-        self.classifier = nn.Linear(32, num_classes)
+        self.classifier = nn.Linear(c2, num_classes)
 
     def forward(self, x):
         x = self.features(x)
@@ -118,12 +119,15 @@ def build_student(
     num_classes: int = 10,
     in_channels: int = 3,
 ) -> nn.Module:
-    """Build a student model by name.
+    """Build a student model sized to approximate a target compression ratio.
+
+    The width multiplier is computed so that the student has roughly
+    ``compression_ratio * teacher_params`` parameters.
 
     Args:
-        teacher: Ignored (kept for backward compatibility).
+        teacher: Teacher model (used to count params when compression_ratio is set).
         student_type: Name of the student architecture.
-        compression_ratio: Ignored (kept for backward compatibility).
+        compression_ratio: Target ratio of student/teacher parameters.
         num_classes: Number of output classes.
         in_channels: Number of input channels (1 for MNIST, 3 for CIFAR-10).
 
@@ -135,6 +139,24 @@ def build_student(
             f"Unknown student: {student_type}. "
             f"Available: {list(STUDENT_REGISTRY.keys())}"
         )
+
+    # Estimate width from compression ratio
+    if teacher is not None and compression_ratio > 0:
+        teacher_params = sum(p.numel() for p in teacher.parameters())
+        target_params = int(teacher_params * compression_ratio)
+        # Base model at width=1.0
+        base = STUDENT_REGISTRY[student_type](
+            in_channels=in_channels, num_classes=num_classes, width=1.0
+        )
+        base_params = sum(p.numel() for p in base.parameters())
+        # Params scale roughly with width² → width ≈ sqrt(target / base)
+        if base_params > 0:
+            w = max(0.125, min(4.0, (target_params / base_params) ** 0.5))
+        else:
+            w = 1.0
+    else:
+        w = 1.0
+
     return STUDENT_REGISTRY[student_type](
-        in_channels=in_channels, num_classes=num_classes
+        in_channels=in_channels, num_classes=num_classes, width=w
     )

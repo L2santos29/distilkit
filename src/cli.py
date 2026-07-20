@@ -133,6 +133,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Distillation temperature — higher = softer targets (default: 4.0)",
     )
     train_parser.add_argument(
+        "--compression-ratio", type=float, default=0.05,
+        help="Target student/teacher parameter ratio (default: 0.05 = 5%)",
+    )
+    train_parser.add_argument(
         "--alpha", type=float, default=0.7,
         help="Distillation loss weight (0-1). Higher = more teacher influence (default: 0.7)",
     )
@@ -240,7 +244,9 @@ def cmd_train(args: argparse.Namespace):
     # 3. Student
     print("🔧 Building student...")
     student = build_student(
+        teacher=teacher,
         student_type="MiniCNN",
+        compression_ratio=args.compression_ratio,
         num_classes=num_classes,
         in_channels=in_channels,
     )

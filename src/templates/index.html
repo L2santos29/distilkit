@@ -77,6 +77,21 @@
             </select>
           </div>
 
+          <!-- Compression Ratio -->
+          <div>
+            <div class="flex justify-between text-sm mb-1.5">
+              <label for="compression" class="text-slate-300">📏 Compression</label>
+              <span id="compression-value" class="text-brand-400 font-mono">5%</span>
+            </div>
+            <input id="compression" type="range" min="1" max="50" value="5" step="1"
+                   class="w-full accent-brand-500" />
+            <div class="flex justify-between text-xs text-slate-600 mt-0.5">
+              <span>1% (tiny)</span>
+              <span>25% (medium)</span>
+              <span>50% (large)</span>
+            </div>
+          </div>
+
           <!-- Epochs -->
           <div>
             <div class="flex justify-between text-sm mb-1.5">
@@ -247,6 +262,7 @@
     bindSlider('alpha');
     bindSlider('batch-size');
     bindSlider('patience');
+    bindSlider('compression');
 
     // Fix alpha display (0-100 → 0.00-1.00)
     document.getElementById('alpha').addEventListener('input', function() {
@@ -256,6 +272,11 @@
     // Fix patience display (0 = "off")
     document.getElementById('patience').addEventListener('input', function() {
       document.getElementById('patience-value').textContent = this.value === '0' ? '0 (off)' : this.value;
+    });
+
+    // Fix compression display (1-50 → 1%-50%)
+    document.getElementById('compression').addEventListener('input', function() {
+      document.getElementById('compression-value').textContent = this.value + '%';
     });
 
     // ─── Fetch config from API ───
@@ -376,6 +397,7 @@
         temperature: parseFloat($('temperature').value),
         alpha: parseInt($('alpha').value) / 100,
         patience: parseInt($('patience').value),
+        compression_ratio: parseInt($('compression').value) / 100,
         batch_size: parseInt($('batch-size').value),
       };
 

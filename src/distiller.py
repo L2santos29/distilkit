@@ -14,6 +14,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
+from src.log_config import logger
+
 
 class DistillationLoss(nn.Module):
     """Combined distillation loss: KL divergence + cross-entropy."""
@@ -138,7 +140,7 @@ class Distiller:
 
             scheduler.step()
 
-            print(
+            logger.info(
                 f"Epoch {epoch + 1}/{epochs} — "
                 f"Loss: {avg_loss:.4f}"
                 + (f" — Val Acc: {acc:.2%}" if val_loader else "")

@@ -9,6 +9,8 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
+from src.log_config import logger
+
 
 def export_to_onnx(
     model: nn.Module,
@@ -58,7 +60,7 @@ def export_to_onnx(
     onnx_model = onnx.load(str(output_path))
     onnx.checker.check_model(onnx_model)
 
-    print(f"✅ Exported to {output_path} ({output_path.stat().st_size / 1e6:.1f} MB)")
+    logger.info(f"✅ Exported to {output_path} ({output_path.stat().st_size / 1e6:.1f} MB)")
     return output_path
 
 
@@ -86,7 +88,7 @@ def export_to_torchscript(
 
     torch.jit.save(traced, str(output_path))
 
-    print(f"✅ Exported TorchScript to {output_path} ({output_path.stat().st_size / 1e6:.1f} MB)")
+    logger.info(f"✅ Exported TorchScript to {output_path} ({output_path.stat().st_size / 1e6:.1f} MB)")
     return output_path
 
 

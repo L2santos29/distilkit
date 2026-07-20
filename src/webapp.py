@@ -25,6 +25,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
+from src.log_config import logger
 from src.teacher import load_teacher
 from src.student import build_student
 from src.distiller import Distiller
@@ -183,8 +184,8 @@ class TrainingTask:
         self._thread.start()
 
     def _emit(self, msg: str) -> None:
-        """Write to both real stdout and the log buffer."""
-        print(msg)
+        """Write to both logging and the task log buffer."""
+        logger.info(msg)
         self._log_buffer.write(msg + "\n")
 
     def _flush_logs(self) -> None:
@@ -966,9 +967,9 @@ async def list_tasks():
 def launch(port: int = 7860, host: str = "127.0.0.1") -> None:
     """Launch the web GUI server."""
     import uvicorn
-    print(f"⚡ DistilKit Web GUI")
-    print(f"   → http://{host}:{port}")
-    print(f"   → Press Ctrl+C to stop\n")
+    logger.info(f"⚡ DistilKit Web GUI")
+    logger.info(f"   → http://{host}:{port}")
+    logger.info(f"   → Press Ctrl+C to stop\n")
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
 

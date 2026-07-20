@@ -10,6 +10,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
+from src.log_config import logger
 from src.teacher import load_teacher
 from src.student import build_student
 from src.distiller import Distiller
@@ -220,32 +221,32 @@ def build_parser() -> argparse.ArgumentParser:
 
 def cmd_train(args: argparse.Namespace) -> nn.Module | None:
     """Run the full distillation pipeline."""
-    print("=" * 60)
-    print("  ⚡ DistilKit — Knowledge Distillation")
-    print("=" * 60)
-    print(f"  Dataset     : {args.dataset}")
-    print(f"  Teacher     : {args.teacher}")
-    print(f"  Epochs      : {args.epochs}")
-    print(f"  Temperature : {args.temperature}")
-    print(f"  Alpha       : {args.alpha}")
-    print(f"  Batch size  : {args.batch_size}")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("  ⚡ DistilKit — Knowledge Distillation")
+    logger.info("=" * 60)
+    logger.info(f"  Dataset     : {args.dataset}")
+    logger.info(f"  Teacher     : {args.teacher}")
+    logger.info(f"  Epochs      : {args.epochs}")
+    logger.info(f"  Temperature : {args.temperature}")
+    logger.info(f"  Alpha       : {args.alpha}")
+    logger.info(f"  Batch size  : {args.batch_size}")
+    logger.info("=" * 60)
     print()
 
     # 1. Data
-    print(f"📦 Loading {args.dataset}...")
+    logger.info(f"📦 Loading {args.dataset}...")
     train_loader, val_loader, num_classes, in_channels = _get_dataset_loaders(
         args.dataset, args.batch_size, args.data_dir
     )
 
     # 2. Teacher
-    print(f"🧠 Loading teacher ({args.teacher})...")
+    logger.info(f"🧠 Loading teacher ({args.teacher})...")
     teacher = load_teacher(args.teacher, num_classes=num_classes)
     teacher_params = sum(p.numel() for p in teacher.parameters())
-    print(f"   Parameters: {teacher_params:,}")
+    logger.info(f"   Parameters: {teacher_params:,}")
 
     # 3. Student
-    print("🔧 Building student...")
+    logger.info("🔧 Building student...")
     student = build_student(
         teacher=teacher,
         student_type="MiniCNN",
@@ -254,20 +255,20 @@ def cmd_train(args: argparse.Namespace) -> nn.Module | None:
         in_channels=in_channels,
     )
     student_params = sum(p.numel() for p in student.parameters())
-    print(f"   Parameters: {student_params:,}")
-    print(f"   Compression: {student_params / teacher_params:.2%} of teacher size")
+    logger.info(f"   Parameters: {student_params:,}")
+    logger.info(f"   Compression: {student_params / teacher_params:.2%} of teacher size")
     print()
 
     # 4. Distill
-    print(f"🔄 Training ({args.epochs} epochs)...")
+    logger.info(f"🔄 Training ({args.epochs} epochs)...")
     os.makedirs("checkpoints", exist_ok=True)
 
     if args.resume and os.path.exists(args.resume):
-        print(f"📂 Resuming from {args.resume}...")
+        logger.info(f"📂 Resuming from {args.resume}...")
         ckpt = torch.load(args.resume, map_location="cpu", weights_only=False)
         student.load_state_dict(ckpt["model"])
         start_epoch = ckpt.get("epoch", 0)
-        print(f"   Resumed at epoch {start_epoch}")
+        logger.info(f"   Resumed at epoch {start_epoch}")
     else:
         start_epoch = 0
 
@@ -327,12 +328,12 @@ def cmd_train(args: argparse.Namespace) -> nn.Module | None:
             else:
                 cmd_train._patience_counter += 1
                 if cmd_train._patience_counter >= args.patience:
-                    print(f"   ⏹️ Early stopping (best: {cmd_train._best_acc:.2%})")
+                    logger.info(f"   ⏹️ Early stopping (best: {cmd_train._best_acc:.2%})")
                     break
 
         scheduler.step()
 
-        print(f"Epoch {epoch+1}/{args.epochs} — Loss: {avg_loss:.4f} — Val Acc: {acc:.2%}")
+        logger.info(f"Epoch {epoch+1}/{args.epochs} — Loss: {avg_loss:.4f} — Val Acc: {acc:.2%}")
 
         # Checkpoint
         if args.ckpt_every > 0 and (epoch + 1) % args.ckpt_every == 0:
@@ -345,20 +346,20 @@ def cmd_train(args: argparse.Namespace) -> nn.Module | None:
                 "accuracies": history["val_acc"],
                 "config": vars(args),
             }, ckpt_path)
-            print(f"   💾 Checkpoint saved: {ckpt_path}")
+            logger.info(f"   💾 Checkpoint saved: {ckpt_path}")
 
     print()
 
     # 5. Benchmark
     if args.benchmark != "none":
-        print(f"📊 Benchmarking on {args.benchmark}...")
+        logger.info(f"📊 Benchmarking on {args.benchmark}...")
         comparison = compare_teacher_student(teacher, student, target=args.benchmark)
-        print(f"   Teacher : {comparison['teacher']['mean_ms']:.2f} ms  "
+        logger.info(f"   Teacher : {comparison['teacher']['mean_ms']:.2f} ms  "
               f"({comparison['teacher']['parameters']:,} params)")
-        print(f"   Student : {comparison['student']['mean_ms']:.2f} ms  "
+        logger.info(f"   Student : {comparison['student']['mean_ms']:.2f} ms  "
               f"({comparison['student']['parameters']:,} params)")
-        print(f"   Speedup : {comparison['speedup']}x")
-        print(f"   Size    : {comparison['compression']:.2%} of teacher")
+        logger.info(f"   Speedup : {comparison['speedup']}x")
+        logger.info(f"   Size    : {comparison['compression']:.2%} of teacher")
         print()
 
     # 6. Export
@@ -368,16 +369,16 @@ def cmd_train(args: argparse.Namespace) -> nn.Module | None:
             path = export_to_onnx(student, f"{args.output_dir}/student.onnx")
         else:
             path = export_to_torchscript(student, f"{args.output_dir}/student.pt")
-        print(f"   Exported to: {path}")
+        logger.info(f"   Exported to: {path}")
 
     print()
-    print("✅ Training complete!")
+    logger.info("✅ Training complete!")
     return student
 
 
 def cmd_benchmark(args: argparse.Namespace) -> None:
     """Benchmark an existing model."""
-    print(f"📊 Benchmarking {args.model} on {args.target}...")
+    logger.info(f"📊 Benchmarking {args.model} on {args.target}...")
 
     ext = os.path.splitext(args.model)[1].lower()
     if ext == ".onnx":
@@ -405,23 +406,23 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
             timings.append((end - start) * 1000)
 
         mean_ms = sum(timings) / len(timings)
-        print(f"   Mean inference: {mean_ms:.3f} ms")
-        print(f"   Throughput: {1000 / mean_ms:.1f} img/s")
+        logger.info(f"   Mean inference: {mean_ms:.3f} ms")
+        logger.info(f"   Throughput: {1000 / mean_ms:.1f} img/s")
     else:
         # PyTorch model
         model = torch.load(args.model, map_location=args.target)
         if isinstance(model, dict) and "state_dict" in model:
             # Try to reconstruct student and load weights
-            print("   Loading checkpoint...")
+            logger.info("   Loading checkpoint...")
             from src.student import MiniCNN
             model = MiniCNN(num_classes=10)
             model.load_state_dict(torch.load(args.model, map_location=args.target))
 
         results = benchmark(model, target=args.target, benchmark_runs=args.runs)
-        print(f"   Mean    : {results['mean_ms']:.3f} ms")
-        print(f"   Median  : {results['median_ms']:.3f} ms")
-        print(f"   P95     : {results['p95_ms']:.3f} ms")
-        print(f"   Through : {results['throughput_imgs_per_sec']:.1f} img/s")
+        logger.info(f"   Mean    : {results['mean_ms']:.3f} ms")
+        logger.info(f"   Median  : {results['median_ms']:.3f} ms")
+        logger.info(f"   P95     : {results['p95_ms']:.3f} ms")
+        logger.info(f"   Through : {results['throughput_imgs_per_sec']:.1f} img/s")
 
 
 def cmd_export(args: argparse.Namespace) -> None:
@@ -458,9 +459,9 @@ def main() -> None:
             from src.webapp import launch
             launch()
         except ImportError as e:
-            print("❌ Web GUI dependencies not installed.")
-            print("   Run: pip install -r requirements.txt")
-            print(f"   Error: {e}")
+            logger.info("❌ Web GUI dependencies not installed.")
+            logger.info("   Run: pip install -r requirements.txt")
+            logger.info(f"   Error: {e}")
             sys.exit(1)
     elif args.command == "train":
         cmd_train(args)

@@ -329,88 +329,110 @@ class TrainingTask:
         has_wget = subprocess.run(["which", "wget"], capture_output=True).returncode == 0
         has_curl = subprocess.run(["which", "curl"], capture_output=True).returncode == 0
 
-        downloaded_ok = False
-        for url in cifar_urls:
+        max_retries = 3
+        base_delay = 2  # seconds
+
+        for attempt in range(1, max_retries + 1):
             if self._cancel_requested:
                 return
-            if downloaded_ok:
-                break
 
-            if has_aria2c:
-                self._emit("   Trying aria2c (4 connections)...")
+            if attempt > 1:
+                delay = base_delay * (2 ** (attempt - 2))  # 2, 4, 8
+                self._emit(f"   Retry {attempt}/{max_retries} in {delay}s...")
                 self._flush_logs()
-                self._subprocess = subprocess.Popen([
-                    "aria2c", "-x", "4", "-s", "4",
-                    "-d", ds_root, "-o", info["filename"], url,
-                ])
-                self._subprocess.wait()
-                self._subprocess = None
-                if os.path.exists(cifar_tgz) and os.path.getsize(cifar_tgz) == expected_size:
-                    downloaded_ok = True
-                    break
+                import time as _time
+                _time.sleep(delay)
                 if self._cancel_requested:
                     return
+                # Remove partial file from previous attempt
+                if os.path.exists(cifar_tgz):
+                    os.remove(cifar_tgz)
 
-            if has_wget:
-                self._emit("   Trying wget...")
-                self._flush_logs()
-                self._subprocess = subprocess.Popen([
-                    "wget", "-O", cifar_tgz, "--show-progress", url,
-                ])
-                self._subprocess.wait()
-                self._subprocess = None
-                if os.path.exists(cifar_tgz) and os.path.getsize(cifar_tgz) == expected_size:
-                    downloaded_ok = True
-                    break
-                if self._cancel_requested:
-                    return
-
-            if has_curl:
-                self._emit("   Trying curl...")
-                self._flush_logs()
-                self._subprocess = subprocess.Popen([
-                    "curl", "-#", "-Lo", cifar_tgz, url,
-                ])
-                self._subprocess.wait()
-                self._subprocess = None
-                if os.path.exists(cifar_tgz) and os.path.getsize(cifar_tgz) == expected_size:
-                    downloaded_ok = True
-                    break
-                if self._cancel_requested:
-                    return
-
-        if not downloaded_ok:
-            import urllib.request
-            self._emit("   Trying Python (fallback)...")
-            self._flush_logs()
+            downloaded_ok = False
             for url in cifar_urls:
                 if self._cancel_requested:
                     return
-                try:
-                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                    resp = urllib.request.urlopen(req)
-                    total = int(resp.headers.get("Content-Length", expected_size))
-                    downloaded, chunk = 0, 8192
-                    with open(cifar_tgz, "wb") as f:
-                        while True:
-                            if self._cancel_requested:
-                                return
-                            data = resp.read(chunk)
-                            if not data:
-                                break
-                            f.write(data)
-                            downloaded += len(data)
-                            if downloaded % (chunk * 200) == 0:
-                                self._emit(f"   {min(downloaded/total*100,100):.0f}% ({downloaded/1e6:.0f}/{total/1e6:.0f} MB)")
-                    if os.path.getsize(cifar_tgz) == expected_size:
+                if downloaded_ok:
+                    break
+
+                if has_aria2c:
+                    self._emit("   Trying aria2c (4 connections)...")
+                    self._flush_logs()
+                    self._subprocess = subprocess.Popen([
+                        "aria2c", "-x", "4", "-s", "4",
+                        "-d", ds_root, "-o", info["filename"], url,
+                    ])
+                    self._subprocess.wait()
+                    self._subprocess = None
+                    if os.path.exists(cifar_tgz) and os.path.getsize(cifar_tgz) == expected_size:
                         downloaded_ok = True
                         break
-                except Exception as e:
-                    self._emit(f"   Error: {e}")
-                    continue
+                    if self._cancel_requested:
+                        return
+
+                if has_wget:
+                    self._emit("   Trying wget...")
+                    self._flush_logs()
+                    self._subprocess = subprocess.Popen([
+                        "wget", "-O", cifar_tgz, "--show-progress", url,
+                    ])
+                    self._subprocess.wait()
+                    self._subprocess = None
+                    if os.path.exists(cifar_tgz) and os.path.getsize(cifar_tgz) == expected_size:
+                        downloaded_ok = True
+                        break
+                    if self._cancel_requested:
+                        return
+
+                if has_curl:
+                    self._emit("   Trying curl...")
+                    self._flush_logs()
+                    self._subprocess = subprocess.Popen([
+                        "curl", "-#", "-Lo", cifar_tgz, url,
+                    ])
+                    self._subprocess.wait()
+                    self._subprocess = None
+                    if os.path.exists(cifar_tgz) and os.path.getsize(cifar_tgz) == expected_size:
+                        downloaded_ok = True
+                        break
+                    if self._cancel_requested:
+                        return
+
+            if not downloaded_ok:
+                import urllib.request
+                self._emit("   Trying Python (fallback)...")
+                self._flush_logs()
+                for url in cifar_urls:
+                    if self._cancel_requested:
+                        return
+                    try:
+                        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                        resp = urllib.request.urlopen(req)
+                        total = int(resp.headers.get("Content-Length", expected_size))
+                        downloaded, chunk = 0, 8192
+                        with open(cifar_tgz, "wb") as f:
+                            while True:
+                                if self._cancel_requested:
+                                    return
+                                data = resp.read(chunk)
+                                if not data:
+                                    break
+                                f.write(data)
+                                downloaded += len(data)
+                                if downloaded % (chunk * 200) == 0:
+                                    self._emit(f"   {min(downloaded/total*100,100):.0f}%")
+                        if os.path.getsize(cifar_tgz) == expected_size:
+                            downloaded_ok = True
+                            break
+                    except Exception as e:
+                        self._emit(f"   Error: {e}")
+                        continue
+
+            if downloaded_ok:
+                break
 
         if not downloaded_ok:
-            self._emit("❌ Could not download from any server.")
+            self._emit("❌ All retries exhausted. Could not download from any server.")
             self.status = "failed"
             self._flush_logs()
             return

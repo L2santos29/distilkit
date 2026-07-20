@@ -130,28 +130,27 @@ class TrainingTask:
         expected_size = 170_498_071
         os.makedirs(data_root, exist_ok=True)
 
-        # If already fully extracted, skip completely
+        # Already extracted
         if os.path.isdir(extracted_dir):
-            self._emit("   ✅ Ya extraído anteriormente.")
             return True
 
-        # If we have a complete valid tar.gz from a previous run, just extract
+        # Valid tar.gz from a previous attempt — just extract
         if os.path.exists(cifar_tgz) and os.path.getsize(cifar_tgz) == expected_size:
-            self._emit("   Archivo ya descargado, extrayendo...")
+            self._emit("   Extracting previously downloaded file...")
             self._flush_logs()
             with tarfile.open(cifar_tgz, "r:gz") as tar:
                 tar.extractall(path=data_root)
-            self._emit("   ✅ CIFAR-10 listo!")
+            self._emit("   ✅ CIFAR-10 ready!")
             self._flush_logs()
             return True
 
-        # Delete any partial file
+        # Delete partial file
         if os.path.exists(cifar_tgz):
             old_size = os.path.getsize(cifar_tgz)
-            self._emit(f"   Eliminando descarga parcial ({old_size/1e6:.0f} MB)...")
+            self._emit(f"   Removing partial download ({old_size/1e6:.0f} MB)...")
             os.remove(cifar_tgz)
 
-        self._emit("⬇️ Descargando CIFAR-10 (170 MB)...")
+        self._emit("⬇️ Downloading CIFAR-10 (170 MB)...")
         self._flush_logs()
 
         # --- Detect available download tools (ordered by speed) ---
@@ -174,7 +173,7 @@ class TrainingTask:
                 break
 
             if has_aria2c:
-                self._emit(f"   Intentando aria2c (4 conexiones)...")
+                self._emit(f"   Trying aria2c (4 connections)...")
                 self._flush_logs()
                 self._subprocess = subprocess.Popen([
                     "aria2c", "-x", "4", "-s", "4",
@@ -190,7 +189,7 @@ class TrainingTask:
                     return False
 
             if has_wget:
-                self._emit(f"   Intentando wget...")
+                self._emit(f"   Trying wget...")
                 self._flush_logs()
                 self._subprocess = subprocess.Popen([
                     "wget", "-O", cifar_tgz, "--show-progress", url,
@@ -204,7 +203,7 @@ class TrainingTask:
                     return False
 
             if has_curl and not downloaded_ok:
-                self._emit(f"   Intentando curl...")
+                self._emit(f"   Trying curl...")
                 self._flush_logs()
                 self._subprocess = subprocess.Popen([
                     "curl", "-#", "-Lo", cifar_tgz, url,
@@ -220,7 +219,7 @@ class TrainingTask:
         # --- Pure Python fallback ---
         if not downloaded_ok:
             import urllib.request
-            self._emit("   Usando Python (fallback)...")
+            self._emit("   Trying Python (fallback)...")
             self._flush_logs()
             for url in cifar_urls:
                 if self._cancel_requested:
@@ -253,28 +252,28 @@ class TrainingTask:
                     continue
 
         if not downloaded_ok:
-            self._emit("❌ No se pudo descargar desde ningún servidor.")
+            self._emit("❌ Could not download from any server.")
             return False
 
         if self._cancel_requested:
             return False
 
-        # --- Verify MD5 (sanity check) ---
-        self._emit("   Verificando integridad...")
+        # --- Verify MD5 ---
+        self._emit("   Verifying integrity...")
         self._flush_logs()
         md5_actual = hashlib.md5(open(cifar_tgz, "rb").read()).hexdigest()
         if md5_actual != expected_md5:
-            self._emit(f"   ⚠️  MD5 no coincide (quizás archivo corrupto, reintentando...)")
+            self._emit(f"   ⚠️  MD5 mismatch — file may be corrupted, will retry next time.")
             os.remove(cifar_tgz)
-            return False  # Will retry on next run
+            return False
 
         # --- Extract ---
-        self._emit("   Extrayendo...")
+        self._emit("   Extracting...")
         self._flush_logs()
         with tarfile.open(cifar_tgz, "r:gz") as tar:
             tar.extractall(path=data_root)
 
-        self._emit("   ✅ CIFAR-10 listo!")
+        self._emit("   ✅ CIFAR-10 ready!")
         self._flush_logs()
         return True
 

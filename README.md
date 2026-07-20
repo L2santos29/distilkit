@@ -135,13 +135,13 @@ distilkit gui
 Web-based interface built with **FastAPI** + **Tailwind CSS** + **Chart.js**.
 
 ```bash
-# Launch (vía script)
+# Launch (via script)
 bash run_gui.sh
 
-# Launch (vía Python)
+# Launch (via Python)
 python -m src.webapp
 
-# Launch (vía CLI instalado)
+# Launch (via installed CLI)
 pip install -e .
 distilkit gui
 ```

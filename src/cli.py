@@ -137,6 +137,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Distillation loss weight (0-1). Higher = more teacher influence (default: 0.7)",
     )
     train_parser.add_argument(
+        "--patience", type=int, default=0,
+        help="Early stopping patience (0 to disable, default: 0)",
+    )
+    train_parser.add_argument(
         "--batch-size", type=int, default=64,
         help="Training batch size (default: 64)",
     )
@@ -302,6 +306,21 @@ def cmd_train(args: argparse.Namespace):
                 correct += predicted.eq(labels).sum().item()
         acc = correct / total
         history["val_acc"].append(acc)
+
+        # Early stopping
+        if args.patience > 0:
+            if not hasattr(cmd_train, "_best_acc"):
+                cmd_train._best_acc = 0.0
+                cmd_train._patience_counter = 0
+            if acc > cmd_train._best_acc + 0.001:
+                cmd_train._best_acc = acc
+                cmd_train._patience_counter = 0
+            else:
+                cmd_train._patience_counter += 1
+                if cmd_train._patience_counter >= args.patience:
+                    print(f"   ⏹️ Early stopping (best: {cmd_train._best_acc:.2%})")
+                    break
+
         scheduler.step()
 
         print(f"Epoch {epoch+1}/{args.epochs} — Loss: {avg_loss:.4f} — Val Acc: {acc:.2%}")

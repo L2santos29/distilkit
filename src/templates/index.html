@@ -107,6 +107,16 @@
                    class="w-full accent-brand-500" />
           </div>
 
+          <!-- Patience (Early Stopping) -->
+          <div>
+            <div class="flex justify-between text-sm mb-1.5">
+              <label for="patience" class="text-slate-300">⏹️ Patience</label>
+              <span id="patience-value" class="text-brand-400 font-mono">0 (off)</span>
+            </div>
+            <input id="patience" type="range" min="0" max="20" value="0" step="1"
+                   class="w-full accent-brand-500" />
+          </div>
+
           <!-- Batch Size -->
           <div>
             <div class="flex justify-between text-sm mb-1.5">
@@ -236,10 +246,16 @@
     bindSlider('temperature');
     bindSlider('alpha');
     bindSlider('batch-size');
+    bindSlider('patience');
 
     // Fix alpha display (0-100 → 0.00-1.00)
     document.getElementById('alpha').addEventListener('input', function() {
       document.getElementById('alpha-value').textContent = (this.value / 100).toFixed(2);
+    });
+
+    // Fix patience display (0 = "off")
+    document.getElementById('patience').addEventListener('input', function() {
+      document.getElementById('patience-value').textContent = this.value === '0' ? '0 (off)' : this.value;
     });
 
     // ─── Fetch config from API ───
@@ -359,6 +375,7 @@
         epochs: parseInt($('epochs').value),
         temperature: parseFloat($('temperature').value),
         alpha: parseInt($('alpha').value) / 100,
+        patience: parseInt($('patience').value),
         batch_size: parseInt($('batch-size').value),
       };
 

@@ -503,6 +503,25 @@ class TrainingTask:
                 self.accuracies.append(acc)
                 self.current_acc = acc
 
+                # --- Early stopping ---
+                patience = self.config.get("patience", 0)
+                if patience > 0:
+                    if not hasattr(self, "_best_acc"):
+                        self._best_acc = 0.0
+                        self._patience_counter = 0
+                    if acc > self._best_acc + 0.001:
+                        self._best_acc = acc
+                        self._patience_counter = 0
+                    else:
+                        self._patience_counter += 1
+                        if self._patience_counter >= patience:
+                            self._emit(
+                                f"   ⏹️ Early stopping (no improvement for {patience} epochs, "
+                                f"best: {self._best_acc:.2%})"
+                            )
+                            self._flush_logs()
+                            break
+
                 scheduler.step()
 
                 # --- Update state ---
@@ -622,6 +641,7 @@ async def start_training(body: dict):
         "epochs": int(body.get("epochs", 10)),
         "temperature": float(body.get("temperature", 4.0)),
         "alpha": float(body.get("alpha", 0.7)),
+        "patience": int(body.get("patience", 0)),
         "batch_size": int(body.get("batch_size", 64)),
     }
 

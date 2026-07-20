@@ -4,6 +4,7 @@ Constructs compact student models designed to be smaller, faster versions
 of their teacher counterparts for knowledge distillation.
 """
 
+import torch
 import torch.nn as nn
 
 

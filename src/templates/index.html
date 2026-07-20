@@ -693,11 +693,21 @@
       }
     })();
 
-    // ─── Keyboard shortcut ───
+    // ─── Keyboard shortcuts ───
     document.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      const isCtrl = e.ctrlKey || e.metaKey;
+      if (isCtrl && e.key === 'Enter') {
         e.preventDefault();
         if (!$('train-btn').disabled) $('train-btn').click();
+      }
+      // Ctrl+S → export to ONNX
+      if (isCtrl && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        if (trainedStudentId) {
+          exportModel('onnx');
+        } else {
+          $('export-status').textContent = '❌ No model to export. Train first.';
+        }
       }
     });
   </script>

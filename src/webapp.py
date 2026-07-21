@@ -166,7 +166,7 @@ def launch(port: int | None = None, host: str | None = None, api_only: bool = Fa
         except OSError:
             _start_redirect_server(port + 1, port)
 
-    logger.info("   \u2192 Press Ctrl+C to stop\n")
+    logger.info("   → Press Ctrl+C to stop\n")
     uvicorn.run(
         app,
         host=host,
@@ -175,3 +175,11 @@ def launch(port: int | None = None, host: str | None = None, api_only: bool = Fa
         ssl_certfile=settings.ssl_certfile or None,
         ssl_keyfile=settings.ssl_keyfile or None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Entry point — allows ``python -m src.webapp`` and ``run_gui.sh``
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    launch()

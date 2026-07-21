@@ -273,14 +273,19 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
             mean_ms = sum(timings) / len(timings)
             logger.info(f"   Mean inference: {mean_ms:.3f} ms")
             logger.info(f"   Throughput: {MS_PER_SEC / mean_ms:.1f} img/s")
+        except (OSError, RuntimeError, ValueError) as e:
+            logger.error(f"❌ ONNX benchmark failed for {args.model}: {e}")
+            return
         except Exception as e:
+            # onnxruntime exceptions (NoSuchFile, RuntimeException, etc.)
+            # inherit directly from Exception with no public base class.
             logger.error(f"❌ ONNX benchmark failed for {args.model}: {e}")
             return
     else:
         # PyTorch model
         try:
             model = torch.load(args.model, map_location=args.target, weights_only=False)
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             logger.error(f"❌ Failed to load model {args.model}: {e}")
             return
         if isinstance(model, dict) and "state_dict" in model:
@@ -292,7 +297,7 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
                 student = MiniCNN(num_classes=10)
                 student.load_state_dict(model["state_dict"])
                 model = student
-            except Exception as e:
+            except (KeyError, OSError, RuntimeError, ValueError) as e:
                 logger.error(f"❌ Failed to load checkpoint {args.model}: {e}")
                 return
 

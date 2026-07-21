@@ -61,7 +61,7 @@ def export_to_onnx(
 
         onnx_model = onnx.load(str(output_path))
         onnx.checker.check_model(onnx_model)
-    except Exception as e:
+    except (OSError, RuntimeError, ValueError) as e:
         logger.error(f"❌ ONNX export failed: {e}")
         raise RuntimeError(f"ONNX export failed: {e}") from e
 

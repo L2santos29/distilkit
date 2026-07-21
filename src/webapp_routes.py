@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 
 from src import datasets as ds
+from src.log_config import logger
 from src.onnx_export import export_to_onnx, export_to_torchscript
 from src.settings import settings
 from src.task_manager import TrainingTask, _tasks, get_history_store, get_tasks

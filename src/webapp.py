@@ -96,7 +96,7 @@ async def validation_exception_handler(
     """Return Pydantic validation errors as HTTP 400 instead of the default 422."""
     messages: list[str] = []
     for err in exc.errors():
-        loc = " \u2192 ".join(str(l) for l in err.get("loc", []))
+        loc = " → ".join(str(part) for part in err.get("loc", []))
         messages.append(f"{loc}: {err['msg']}" if loc else err["msg"])
     raise HTTPException(status_code=400, detail="; ".join(messages))
 

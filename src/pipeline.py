@@ -12,12 +12,11 @@ import torch
 import torch.nn as nn
 
 from src import datasets as ds
-from src.benchmarks import compare_teacher_student
+from src.benchmarks import DeviceTarget, compare_teacher_student
 from src.circuit_breaker import CircuitBreaker, CircuitOpenError
 from src.distiller import Distiller
 from src.log_config import logger
 from src.onnx_export import export_to_onnx, export_to_torchscript
-from src.settings import settings
 from src.student import build_student
 from src.teacher import load_teacher
 from src.tracing import tracer
@@ -60,13 +59,15 @@ def run_distillation_pipeline(
     ckpt_every: int = 5,
     resume: str | None = None,
     # Post-training
-    benchmark_target: str | None = None,
+    benchmark_target: DeviceTarget | None = None,
     export_format: str | None = None,
     export_output_dir: str = "checkpoints",
     # Behaviour
     teacher_fallback_random: bool = False,
     student_cache: dict[str, nn.Module] | None = None,
     dataset_subprocess_tracker: list | None = None,
+    # Optimizer
+    learning_rate: float = 1e-3,
     on_message: Callable[[str], None] = logger.info,
     on_epoch_end: "Callable[[int, int, float, float | None], None] | None" = None,
     on_batch_end: "Callable[[int, int, int, int, float], None] | None" = None,
@@ -104,8 +105,8 @@ def run_distillation_pipeline(
             )
         except CircuitOpenError:
             raise DatasetError(
-                f"Dataset downloads are temporarily suspended due to repeated "
-                f"failures.  Wait a moment and try again."
+                "Dataset downloads are temporarily suspended due to repeated "
+                "failures.  Wait a moment and try again."
             )
         if result is None:
             raise DatasetError(
@@ -126,8 +127,8 @@ def run_distillation_pipeline(
             teacher = _teacher_cb.call(load_teacher, teacher_name, num_classes=num_classes)
         except CircuitOpenError:
             raise TeacherError(
-                f"Teacher model downloads are temporarily suspended due to "
-                f"repeated failures.  Wait a moment and try again."
+                "Teacher model downloads are temporarily suspended due to "
+                "repeated failures.  Wait a moment and try again."
             )
         except (OSError, RuntimeError) as e:
             if teacher_fallback_random:
@@ -188,7 +189,7 @@ def run_distillation_pipeline(
     # ------------------------------------------------------------------
     # 5. Optimizer & scheduler
     # ------------------------------------------------------------------
-    optimizer = torch.optim.Adam(student.parameters(), lr=LR_DEFAULT)
+    optimizer = torch.optim.Adam(student.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
 
     # ------------------------------------------------------------------
@@ -265,8 +266,13 @@ def run_distillation_pipeline(
                 f"   Student : {comparison['student']['mean_ms']:.2f} ms  "
                 f"({comparison['student']['parameters']:,} params)"
             )
-            _msg(f"   Speedup : {comparison['speedup']}x")
-            _msg(f"   Size    : {comparison['compression']:.2%} of teacher")
+            _msg(
+                f"   Speedup : {comparison['speedup']}x"
+            )
+            _msg(
+                f"   Size    : {comparison['compression']:.2%} of teacher"
+            )
+
 
     # ------------------------------------------------------------------
     # 9. Export

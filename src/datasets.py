@@ -8,7 +8,7 @@ import hashlib
 import os
 import subprocess
 import tarfile
-from pathlib import Path
+from collections.abc import Callable
 
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
@@ -108,7 +108,7 @@ def get_dataset_info(name: str) -> dict:
 
 def download_cifar10(
     ds_root: str,
-    cancel_flag: callable = lambda: False,
+    cancel_flag: Callable[[], bool] = lambda: False,
     subprocess_tracker: list | None = None,
 ) -> bool:
     """Download + extract CIFAR-10 with aria2c/wget/curl and exponential backoff.
@@ -133,7 +133,7 @@ def download_cifar10(
         if all(os.path.isfile(os.path.join(extracted_dir, f)) for f in batch_files):
             return True
         else:
-            logger.info(f"   Extracted directory incomplete, re-extracting...")
+            logger.info("   Extracted directory incomplete, re-extracting...")
             import shutil
             shutil.rmtree(extracted_dir, ignore_errors=True)
     if os.path.exists(cifar_tgz) and os.path.getsize(cifar_tgz) == expected_size:
@@ -279,7 +279,7 @@ def get_dataset_loaders(
     dataset_name: str,
     batch_size: int,
     data_root: str = "./data",
-    cancel_flag: callable = lambda: False,
+    cancel_flag: Callable[[], bool] = lambda: False,
     subprocess_tracker: list | None = None,
 ) -> tuple[DataLoader, DataLoader, int, int] | None:
     """Return ``(train_loader, val_loader, num_classes, in_channels)``.

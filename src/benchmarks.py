@@ -20,7 +20,7 @@ MS_PER_SEC: int = 1000
 
 def benchmark(
     model: nn.Module,
-    input_shape: tuple[int, int, int] = (1, 3, 32, 32),
+    input_shape: tuple[int, int, int, int] = (1, 3, 32, 32),
     target: DeviceTarget = "cpu",
     warmup_runs: int = 10,
     benchmark_runs: int = 100,
@@ -77,7 +77,7 @@ def benchmark(
 def compare_teacher_student(
     teacher: nn.Module,
     student: nn.Module,
-    input_shape: tuple[int, int, int] = (1, 3, 32, 32),
+    input_shape: tuple[int, int, int, int] = (1, 3, 32, 32),
     target: DeviceTarget = "cpu",
 ) -> dict:
     """Benchmark teacher and student models side-by-side.

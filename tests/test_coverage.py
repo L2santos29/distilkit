@@ -1515,9 +1515,9 @@ class TestWebappCoverage:
 
         _tasks["fake_fallback"] = FakeTask()
         try:
-            with patch("src.webapp.export_to_onnx") as mock_onnx:
+            with patch("src.webapp_routes.export_to_onnx") as mock_onnx:
                 mock_onnx.side_effect = OSError("ONNX export failed")
-                with patch("src.webapp.export_to_torchscript") as mock_ts:
+                with patch("src.webapp_routes.export_to_torchscript") as mock_ts:
                     mock_ts.return_value = Path("checkpoints/fake_fallback.pt")
                     resp = client_ws.post(
                         "/api/export/fake_fallback",
@@ -1548,9 +1548,9 @@ class TestWebappCoverage:
 
         _tasks["fake_outer_exc"] = FakeTask()
         try:
-            with patch("src.webapp.export_to_onnx") as mock_onnx:
+            with patch("src.webapp_routes.export_to_onnx") as mock_onnx:
                 mock_onnx.side_effect = OSError("ONNX failed")
-                with patch("src.webapp.export_to_torchscript") as mock_ts:
+                with patch("src.webapp_routes.export_to_torchscript") as mock_ts:
                     mock_ts.side_effect = RuntimeError("TorchScript also failed")
                     resp = client_ws.post(
                         "/api/export/fake_outer_exc",

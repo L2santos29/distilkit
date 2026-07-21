@@ -6,8 +6,8 @@ numpy>=1.26.0
 tqdm>=4.67.0
 matplotlib>=3.8.0
 fastapi>=0.139.2
-uvicorn>=0.34.0
-sse-starlette>=2.0.0
+uvicorn>=0.51.0
+sse-starlette>=3.4.6
 
 # ── Optional: Distributed tracing with OpenTelemetry ──────────────
 # Uncomment to export spans to Jaeger, Zipkin, or any OTLP-compatible backend.

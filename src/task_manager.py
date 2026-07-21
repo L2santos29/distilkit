@@ -96,7 +96,7 @@ class TrainingTask:
         self._thread: threading.Thread | None = None
         self._log_buffer = io.StringIO()
         self._cancel_requested = False
-        self._subprocess: subprocess.Popen | None = None
+        self._subprocess: subprocess.Popen | list | None = None
         self.eta_seconds: float = 0.0
         self._epoch_times: list[float] = []
         self.created_at = datetime.now()
@@ -106,12 +106,22 @@ class TrainingTask:
         """Cancel a running training task."""
         self._cancel_requested = True
         # Kill subprocess (wget/curl) if running
-        if self._subprocess and self._subprocess.poll() is None:
-            self._subprocess.terminate()
+        sub = self._subprocess
+        # During dataset download, _subprocess is a list of Popen handles
+        if isinstance(sub, list):
+            for proc in list(sub):
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+        elif sub is not None and sub.poll() is None:
+            sub.terminate()
             try:
-                self._subprocess.wait(timeout=5)
+                sub.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                self._subprocess.kill()
+                sub.kill()
         self.status = "cancelled"
         self._emit("\n⛔ Training cancelled.")
         self._flush_logs()

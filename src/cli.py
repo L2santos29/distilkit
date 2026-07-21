@@ -4,6 +4,7 @@
 import argparse
 import os
 import sys
+from collections.abc import Callable
 
 import torch
 import torch.nn as nn
@@ -23,7 +24,7 @@ TEACHER_CHOICES = ds.TEACHER_CHOICES
 # ---------------------------------------------------------------------------
 
 
-def _int_range(min_val: int, max_val: int | None, name: str) -> callable:
+def _int_range(min_val: int, max_val: int | None, name: str) -> Callable[[str], int]:
     """Return a callable that parses an int and validates ``min ≤ value ≤ max``."""
 
     def _validator(raw: str) -> int:
@@ -40,7 +41,7 @@ def _int_range(min_val: int, max_val: int | None, name: str) -> callable:
     return _validator
 
 
-def _float_range(min_val: float, max_val: float | None, name: str) -> callable:
+def _float_range(min_val: float, max_val: float | None, name: str) -> Callable[[str], float]:
     """Return a callable that parses a float and validates ``min ≤ value ≤ max``."""
 
     def _validator(raw: str) -> float:

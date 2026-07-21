@@ -135,14 +135,20 @@ class TrainingTask:
     def _emit(self, msg: str) -> None:
         """Write to both logging and the task log buffer with task ID context."""
         logger.bind(task_id=self.id[:8]).info(msg)
-        self._log_buffer.write(msg + "\n")
+        try:
+            self._log_buffer.write(msg + "\n")
+        except ValueError:
+            pass  # Buffer already closed (e.g. during shutdown)
         self._dirty = True
 
     def _flush_logs(self) -> None:
         """Transfer accumulated buffer to the logs string, capping total size."""
-        self.logs += self._log_buffer.getvalue()
-        self._log_buffer.truncate(0)
-        self._log_buffer.seek(0)
+        try:
+            self.logs += self._log_buffer.getvalue()
+            self._log_buffer.truncate(0)
+            self._log_buffer.seek(0)
+        except ValueError:
+            pass  # Buffer already closed (e.g. during shutdown)
         # Trim oldest logs if over the limit
         if len(self.logs) > settings.max_log_size:
             self.logs = self.logs[-settings.max_log_size :]

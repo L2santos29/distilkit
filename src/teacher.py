@@ -49,17 +49,25 @@ def load_teacher(model_name: str, num_classes: int = 10, pretrained: bool = True
     if cached is not None:
         return cached
 
-    model_fn = model_registry[model_name]
+    import torch
 
-    # Handle models that need explicit num_classes (ResNet) vs. those that don't (MobileNet)
-    if model_name.startswith("resnet") or model_name.startswith("efficientnet"):
-        model = model_fn(weights="DEFAULT" if pretrained else None)
-        # Replace classifier head if num_classes differs from default
-        if hasattr(model, "fc") and model.fc.out_features != num_classes:
-            model.fc = nn.Linear(model.fc.in_features, num_classes)
-    else:
-        weights = "DEFAULT" if pretrained else None
-        model = model_fn(weights=weights, num_classes=num_classes)
+    model_fn = model_registry[model_name]
+    model = model_fn(weights="DEFAULT" if pretrained else None)
+
+    # Replace the classifier head so it matches the requested num_classes,
+    # regardless of what the pretrained weights expect (ImageNet = 1000).
+    # Newer torchvision versions override num_classes when weights are given,
+    # so we must load first and swap heads afterwards.
+    if hasattr(model, "fc"):
+        # ResNet / EfficientNet
+        if model.fc.out_features != num_classes:
+            model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
+    elif hasattr(model, "classifier"):
+        # MobileNet V2 / V3  — classifier is a Sequential, last layer is Linear
+        last = model.classifier[-1]
+        if hasattr(last, "out_features") and last.out_features != num_classes:
+            in_feats = last.in_features
+            model.classifier[-1] = torch.nn.Linear(in_feats, num_classes)
 
     _teacher_cache[key] = model
     return model

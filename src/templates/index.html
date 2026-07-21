@@ -164,10 +164,12 @@
     .dark .help-tip {
       background: #334155; color: #94a3b8;
     }
-    .help-tip:hover {
+    .help-tip:hover,
+    .help-tip:focus-visible {
       background: #94a3b8; color: #1e293b;
     }
-    .dark .help-tip:hover {
+    .dark .help-tip:hover,
+    .dark .help-tip:focus-visible {
       background: #475569; color: #e2e8f0;
     }
     .help-tip .tooltip-text {
@@ -206,9 +208,11 @@
     .dark .help-tip .tooltip-text::before {
       border-bottom-color: #f8fafc;
     }
-    .help-tip:hover .tooltip-text {
-      visibility: visible;
-      opacity: 1;
+    .help-tip:hover .tooltip-text,
+        .help-tip:focus .tooltip-text,
+        .help-tip:focus-within .tooltip-text {
+          visibility: visible;
+          opacity: 1;
     }
     /* ─── Disabled controls ─── */
     #config-panel.controls-disabled select,
@@ -303,7 +307,7 @@
         <!-- Theme toggle -->
         <button id="theme-toggle" class="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
                 title="Toggle theme" aria-label="Toggle theme">
-        <svg class="theme-icon w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <svg class="theme-icon w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <!-- Sun icon (shown in dark mode) -->
           <path class="dark:hidden" stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
           <!-- Moon icon (shown in light mode) -->
@@ -322,7 +326,7 @@
           <h2 class="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide flex items-center gap-2">
             <button id="config-toggle" class="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
                     title="Toggle config panel" aria-label="Toggle config panel" aria-expanded="true">
-              <svg id="config-chevron" class="w-4 h-4 transition-transform duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <svg id="config-chevron" class="w-4 h-4 transition-transform duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
               </svg>
             </button>
@@ -333,9 +337,9 @@
           <!-- Dataset -->
           <div>
             <label class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">📦 Dataset
-              <span class="help-tip" data-tip="">?<span class="tooltip-text">Which image dataset to use. CIFAR-10 (32×32 color, 10 classes) is the default. MNIST and FashionMNIST are 28×28 grayscale. SVHN is 32×32 color (street digits).</span></span>
+              <span class="help-tip" tabindex="0" role="tooltip" data-tip="">?<span class="tooltip-text">Which image dataset to use. CIFAR-10 (32×32 color, 10 classes) is the default. MNIST and FashionMNIST are 28×28 grayscale. SVHN is 32×32 color (street digits).</span></span>
             </label>
-            <select id="dataset"
+            <select id="dataset" aria-label="Select dataset"
               class="w-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 focus-visible:outline-2 focus-visible:outline-brand-500 focus-visible:outline-offset-2">
             </select>
           </div>
@@ -343,9 +347,9 @@
           <!-- Teacher -->
           <div>
             <label class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">🧠 Teacher Model
-              <span class="help-tip">?<span class="tooltip-text">The large pre-trained model that provides knowledge. ResNet18 is fastest, ResNet50/101 are more accurate. MobileNet and EfficientNet are efficient by design.</span></span>
+              <span class="help-tip" tabindex="0" role="tooltip">?<span class="tooltip-text">The large pre-trained model that provides knowledge. ResNet18 is fastest, ResNet50/101 are more accurate. MobileNet and EfficientNet are efficient by design.</span></span>
             </label>
-            <select id="teacher"
+            <select id="teacher" aria-label="Select teacher model"
               class="w-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 focus-visible:outline-2 focus-visible:outline-brand-500 focus-visible:outline-offset-2">
             </select>
           </div>
@@ -353,9 +357,9 @@
           <!-- Student -->
           <div>
             <label class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">⚡ Student Model
-              <span class="help-tip">?<span class="tooltip-text">The compact model being trained. MiniCNN is a lightweight CNN, MiniResNet uses residual connections. The width (channel count) is auto-scaled to match the compression ratio.</span></span>
+              <span class="help-tip" tabindex="0" role="tooltip">?<span class="tooltip-text">The compact model being trained. MiniCNN is a lightweight CNN, MiniResNet uses residual connections. The width (channel count) is auto-scaled to match the compression ratio.</span></span>
             </label>
-            <select id="student"
+            <select id="student" aria-label="Select student model"
               class="w-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 focus-visible:outline-2 focus-visible:outline-brand-500 focus-visible:outline-offset-2">
             </select>
           </div>
@@ -369,7 +373,7 @@
               <span id="compression-value" class="text-brand-500 dark:text-brand-400 font-mono">5%</span>
             </div>
             <input id="compression" type="range" min="1" max="50" value="5" step="1"
-                   class="w-full accent-brand-500" />
+                   aria-label="Compression ratio" class="w-full accent-brand-500" />
             <div class="flex justify-between text-xs text-slate-400 dark:text-slate-500 mt-0.5">
               <span>1% (tiny)</span>
               <span>25% (medium)</span>
@@ -386,7 +390,7 @@
               <span id="epochs-value" class="text-brand-500 dark:text-brand-400 font-mono">10</span>
             </div>
             <input id="epochs" type="range" min="1" max="50" value="10" step="1"
-                   class="w-full accent-brand-500" />
+                   aria-label="Number of epochs" class="w-full accent-brand-500" />
           </div>
 
           <!-- Temperature -->
@@ -398,7 +402,7 @@
               <span id="temperature-value" class="text-brand-500 dark:text-brand-400 font-mono">4.0</span>
             </div>
             <input id="temperature" type="range" min="1" max="20" value="4" step="0.5"
-                   class="w-full accent-brand-500" />
+                   aria-label="Temperature" class="w-full accent-brand-500" />
           </div>
 
           <!-- Alpha -->
@@ -409,8 +413,8 @@
               </label>
               <span id="alpha-value" class="text-brand-500 dark:text-brand-400 font-mono">0.70</span>
             </div>
-            <input id="alpha" type="range" min="0" max="100" value="70" step="5"
-                   class="w-full accent-brand-500" />
+            <input id="alpha" type="range" min="0" max="100" value="70"
+                   aria-label="Alpha distillation loss weight" class="w-full accent-brand-500" />
           </div>
 
           <!-- Patience (Early Stopping) -->
@@ -422,7 +426,7 @@
               <span id="patience-value" class="text-brand-500 dark:text-brand-400 font-mono">0 (off)</span>
             </div>
             <input id="patience" type="range" min="0" max="20" value="0" step="1"
-                   class="w-full accent-brand-500" />
+                   aria-label="Early stopping patience" class="w-full accent-brand-500" />
           </div>
 
           <!-- Batch Size -->
@@ -434,7 +438,7 @@
               <span id="batch-size-value" class="text-brand-500 dark:text-brand-400 font-mono">64</span>
             </div>
             <input id="batch-size" type="range" min="8" max="512" value="64" step="8"
-                   class="w-full accent-brand-500" />
+                   aria-label="Batch size" class="w-full accent-brand-500" />
           </div>
 
           <!-- ─── Presets ─── -->
@@ -468,7 +472,7 @@
           </div>
 
           <!-- Train Button -->
-          <button id="share-config-btn"
+          <button id="share-config-btn" aria-label="Copy configuration as URL link"
                   class="w-full py-2 rounded-lg text-xs font-medium transition-all duration-150
                          bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700
                          text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200
@@ -479,7 +483,7 @@
           </button>
 
           <!-- Train Button -->
-          <button id="train-btn"
+          <button id="train-btn" aria-label="Start training"
                   class="w-full py-3 rounded-xl font-semibold text-sm transition-all duration-200
                          bg-brand-600 hover:bg-brand-500 text-white shadow-lg shadow-brand-600/25
                          disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-brand-600
@@ -489,7 +493,7 @@
           </button>
 
           <!-- Cancel button (hidden until training starts) -->
-          <button id="cancel-btn"
+          <button id="cancel-btn" aria-label="Cancel current training"
                   class="w-full py-3 rounded-xl font-semibold text-sm transition-all duration-200 border
                          bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-800/50 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800
                          hidden items-center justify-center gap-2">
@@ -502,11 +506,11 @@
             <p class="text-xs text-slate-400 dark:text-slate-500 text-center">Export trained student:</p>
             <div id="export-size-preview" class="text-center text-xs text-slate-400 dark:text-slate-500"></div>
             <div class="grid grid-cols-2 gap-2">
-              <button id="export-onnx-btn"
+              <button id="export-onnx-btn" aria-label="Export model to ONNX format"
                       class="py-2 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 transition-colors">
                 📦 ONNX
               </button>
-              <button id="export-ts-btn"
+              <button id="export-ts-btn" aria-label="Export model to TorchScript format"
                       class="py-2 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 transition-colors">
                 📦 TorchScript
               </button>

@@ -67,9 +67,9 @@ class Settings:
     # API key for protecting endpoints. Empty = no auth (local mode).
     # Set via the API_KEY environment variable.
     api_key: str = ""
-    # CORS allowed origins. Comma-separated list or "*" for all.
+    # CORS allowed origins. Comma-separated list.
     # Set via the CORS_ORIGINS environment variable.
-    cors_origins: str = "*"
+    cors_origins: str = "http://127.0.0.1:7860"
     # Rate limit: max requests per minute per IP. 0 = disabled.
     # Set via the RATE_LIMIT_PER_MINUTE environment variable.
     rate_limit_per_minute: int = 30
@@ -103,7 +103,7 @@ class Settings:
             max_log_size=int(os.environ.get("MAX_LOG_SIZE", "100000")),
             log_level=os.environ.get("LOG_LEVEL", "INFO"),
             api_key=os.environ.get("API_KEY", ""),
-            cors_origins=os.environ.get("CORS_ORIGINS", "*"),
+            cors_origins=os.environ.get("CORS_ORIGINS", "http://127.0.0.1:7860"),
             rate_limit_per_minute=int(os.environ.get("RATE_LIMIT_PER_MINUTE", "30")),
             hsts_max_age=int(os.environ.get("HSTS_MAX_AGE", "0")),
             ssl_certfile=os.environ.get("SSL_CERTFILE", ""),

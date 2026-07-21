@@ -19,6 +19,53 @@ TEACHER_CHOICES = ds.TEACHER_CHOICES
 
 
 # ---------------------------------------------------------------------------
+# CLI argument type validators (range-checked, matching Pydantic constraints)
+# ---------------------------------------------------------------------------
+
+
+def _int_range(min_val: int, max_val: int | None, name: str) -> callable:
+    """Return a callable that parses an int and validates ``min ≤ value ≤ max``."""
+
+    def _validator(raw: str) -> int:
+        try:
+            val = int(raw)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"{name} must be an integer, got {raw!r}")
+        if val < min_val:
+            raise argparse.ArgumentTypeError(
+                f"{name} must be ≥ {min_val}, got {val}"
+            )
+        if max_val is not None and val > max_val:
+            raise argparse.ArgumentTypeError(
+                f"{name} must be ≤ {max_val}, got {val}"
+            )
+        return val
+
+    return _validator
+
+
+def _float_range(min_val: float, max_val: float | None, name: str) -> callable:
+    """Return a callable that parses a float and validates ``min ≤ value ≤ max``."""
+
+    def _validator(raw: str) -> float:
+        try:
+            val = float(raw)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"{name} must be a number, got {raw!r}")
+        if val < min_val:
+            raise argparse.ArgumentTypeError(
+                f"{name} must be ≥ {min_val}, got {val}"
+            )
+        if max_val is not None and val > max_val:
+            raise argparse.ArgumentTypeError(
+                f"{name} must be ≤ {max_val}, got {val}"
+            )
+        return val
+
+    return _validator
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -64,39 +111,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train_parser.add_argument(
         "--epochs",
-        type=int,
+        type=_int_range(1, 1000, "epochs"),
         default=10,
-        help="Number of training epochs (default: 10)",
+        help="Number of training epochs (1–1000, default: 10)",
     )
     train_parser.add_argument(
         "--temperature",
-        type=float,
+        type=_float_range(0.1, 100.0, "temperature"),
         default=4.0,
-        help="Distillation temperature — higher = softer targets (default: 4.0)",
+        help="Distillation temperature (0.1–100.0, default: 4.0)",
     )
     train_parser.add_argument(
         "--compression-ratio",
-        type=float,
+        type=_float_range(0.01, 1.0, "compression-ratio"),
         default=0.05,
-        help="Target student/teacher parameter ratio (default: 0.05 = 5%)",
+        help="Target student/teacher parameter ratio (0.01–1.0, default: 0.05)",
     )
     train_parser.add_argument(
         "--alpha",
-        type=float,
+        type=_float_range(0.0, 1.0, "alpha"),
         default=0.7,
-        help="Distillation loss weight (0-1). Higher = more teacher influence (default: 0.7)",
+        help="Distillation loss weight (0.0–1.0, default: 0.7)",
     )
     train_parser.add_argument(
         "--patience",
-        type=int,
+        type=_int_range(0, 100, "patience"),
         default=0,
-        help="Early stopping patience (0 to disable, default: 0)",
+        help="Early stopping patience (0–100, 0 to disable, default: 0)",
     )
     train_parser.add_argument(
         "--batch-size",
-        type=int,
+        type=_int_range(1, 4096, "batch-size"),
         default=64,
-        help="Training batch size (default: 64)",
+        help="Training batch size (1–4096, default: 64)",
     )
     train_parser.add_argument(
         "--export",
@@ -117,7 +164,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train_parser.add_argument(
         "--ckpt-every",
-        type=int,
+        type=_int_range(0, 1000, "ckpt-every"),
         default=5,
         help="Save checkpoint every N epochs (0 to disable, default: 5)",
     )
@@ -147,9 +194,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bench_parser.add_argument(
         "--runs",
-        type=int,
+        type=_int_range(1, 100_000, "runs"),
         default=100,
-        help="Number of inference runs (default: 100)",
+        help="Number of inference runs (1–100000, default: 100)",
     )
 
     # ---- export ----

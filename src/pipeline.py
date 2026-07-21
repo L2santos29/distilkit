@@ -198,15 +198,20 @@ def run_distillation_pipeline(
     initial_history = None
     if resume and Path(resume).exists():
         _msg(f"📂 Resuming from {resume}...")
-        ckpt = torch.load(resume, map_location=device, weights_only=False)
-        student.load_state_dict(ckpt["model"])
-        optimizer.load_state_dict(ckpt["optimizer"])
-        start_epoch = ckpt.get("epoch", 0)
-        initial_history = {
-            "train_loss": ckpt.get("losses", []),
-            "val_acc": ckpt.get("accuracies", []),
-        }
-        _msg(f"   Resumed at epoch {start_epoch}/{epochs}")
+        try:
+            ckpt = torch.load(resume, map_location=device, weights_only=False)
+            student.load_state_dict(ckpt["model"])
+            optimizer.load_state_dict(ckpt["optimizer"])
+            start_epoch = ckpt.get("epoch", 0)
+            initial_history = {
+                "train_loss": ckpt.get("losses", []),
+                "val_acc": ckpt.get("accuracies", []),
+            }
+            _msg(f"   Resumed at epoch {start_epoch}/{epochs}")
+        except (OSError, RuntimeError, ValueError, KeyError) as e:
+            _msg(f"   ⚠️ Could not load checkpoint: {e}. Starting from scratch.")
+            start_epoch = 0
+            initial_history = None
 
     # ------------------------------------------------------------------
     # 7. Train

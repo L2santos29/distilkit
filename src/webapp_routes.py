@@ -113,7 +113,14 @@ async def index():
                 ],
             }
         )
-    html = TEMPLATE_FILE.read_text(encoding="utf-8")
+    try:
+        html = TEMPLATE_FILE.read_text(encoding="utf-8")
+    except (OSError, IOError) as e:
+        logger.error("Failed to read template: %s", e)
+        return HTMLResponse(
+            "<html><body><h1>DistilKit</h1><p>Web GUI template unavailable.</p></body></html>",
+            status_code=503,
+        )
     return HTMLResponse(html)
 
 

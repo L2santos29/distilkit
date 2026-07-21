@@ -58,13 +58,12 @@ jobs:
           # Install CPU-only PyTorch first (no CUDA needed)
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
-          pip install pytest pytest-cov
+          pip install pytest pytest-cov ruff
 
       - name: Lint with ruff
         run: |
           pip install ruff
           ruff check src/ tests/ --no-cache
-        continue-on-error: true
         timeout-minutes: 2
 
       - name: Run tests with coverage

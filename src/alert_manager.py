@@ -137,6 +137,7 @@ async def evaluate_alerts() -> None:
 
 def _evaluate_once() -> None:
     """Run a single alert evaluation cycle."""
+    global _consecutive_failures
     alerts: list[dict[str, str]] = []
 
     # 1. Error rate

@@ -1763,3 +1763,286 @@ class TestStudentCoverage:
         dummy = torch.randn(2, 3, 32, 32)
         out = model(dummy)
         assert out.shape == (2, 10)
+
+
+# ---------------------------------------------------------------------------
+# alert_manager.py — alert evaluation logic
+# ---------------------------------------------------------------------------
+
+
+class TestAlertManagerCoverage:
+    """Coverage for alert_manager.py: all alert evaluation and suppression logic."""
+
+    def setup_method(self) -> None:
+        """Reset all module-level state before each test."""
+        import src.alert_manager as am
+        am._error_window.clear()
+        am._request_window.clear()
+        am._task_failures.clear()
+        am._last_alert.clear()
+        am._consecutive_failures = 0
+
+    # ── _check_error_rate ────────────────────────────────────────────────
+
+    def test_check_error_rate_empty_returns_none(self) -> None:
+        """_check_error_rate returns None when no requests recorded."""
+        import src.alert_manager as am
+        assert am._check_error_rate() is None
+
+    def test_check_error_rate_high_rate(self) -> None:
+        """_check_error_rate returns alert when error rate > 5%."""
+        import src.alert_manager as am
+        import time
+        now = time.time()
+        for _ in range(10):
+            am._request_window.append(now)
+            am._error_window.append(now)
+        msg = am._check_error_rate()
+        assert msg is not None
+        assert "5xx" in msg
+
+    def test_check_error_rate_multiple_errors(self) -> None:
+        """_check_error_rate returns alert when >=5 errors even at low rate."""
+        import src.alert_manager as am
+        import time
+        now = time.time()
+        for _ in range(5):
+            am._request_window.append(now)
+            am._error_window.append(now)
+        for _ in range(500):
+            am._request_window.append(now)
+        msg = am._check_error_rate()
+        assert msg is not None
+        assert "5xx" in msg
+
+    def test_check_error_rate_low_returns_none(self) -> None:
+        """_check_error_rate returns None when both thresholds are below limits."""
+        import src.alert_manager as am
+        import time
+        now = time.time()
+        for _ in range(2):
+            am._request_window.append(now)
+            am._error_window.append(now)
+        for _ in range(100):
+            am._request_window.append(now)
+        assert am._check_error_rate() is None
+
+    def test_check_error_rate_purge_old_entries(self) -> None:
+        """_check_error_rate purges entries older than 5 minutes."""
+        import src.alert_manager as am
+        import time
+        old = time.time() - 400  # older than the 300 s window
+        now = time.time()
+        am._error_window.append(old)
+        am._request_window.append(old)
+        am._request_window.append(now)
+        msg = am._check_error_rate()
+        # After purge only 1 request remains, 0 errors → None
+        assert msg is None
+
+    # ── _check_task_failures ─────────────────────────────────────────────
+
+    def test_check_task_failures_empty(self) -> None:
+        """_check_task_failures returns None when no failures exist."""
+        import src.alert_manager as am
+        assert am._check_task_failures() is None
+
+    def test_check_task_failures_multiple(self) -> None:
+        """_check_task_failures returns alert when >=3 failures within an hour."""
+        import src.alert_manager as am
+        import time
+        now = time.time()
+        for i in range(3):
+            am._task_failures[f"task_{i}"] = now
+        msg = am._check_task_failures()
+        assert msg is not None
+        assert "training" in msg
+
+    def test_check_task_failures_below_threshold(self) -> None:
+        """_check_task_failures returns None when <3 failures exist."""
+        import src.alert_manager as am
+        import time
+        am._task_failures["single_task"] = time.time()
+        assert am._check_task_failures() is None
+
+    # ── _should_suppress ─────────────────────────────────────────────────
+
+    def test_should_suppress_first_call(self) -> None:
+        """_should_suppress returns False on first call (no suppression)."""
+        import src.alert_manager as am
+        assert not am._should_suppress("test_alert_1")
+
+    def test_should_suppress_within_window(self) -> None:
+        """_should_suppress returns True when called again within suppression window."""
+        import src.alert_manager as am
+        am._should_suppress("test_alert_2")  # first call → False
+        assert am._should_suppress("test_alert_2")  # second call → suppressed
+
+    # ── _post_webhook ────────────────────────────────────────────────────
+
+    def test_post_webhook_no_url(self) -> None:
+        """_post_webhook returns early when no webhook URL configured."""
+        import src.alert_manager as am
+        from src.settings import settings as s
+        original = s.alert_webhook_url
+        s.alert_webhook_url = ""
+        try:
+            am._post_webhook({"text": "test"})  # Should not raise
+        finally:
+            s.alert_webhook_url = original
+
+    def test_post_webhook_with_url(self) -> None:
+        """_post_webhook posts JSON to the configured webhook URL."""
+        import src.alert_manager as am
+        from src.settings import settings as s
+        from unittest.mock import patch
+        original = s.alert_webhook_url
+        s.alert_webhook_url = "https://hooks.example.com/hook"
+        try:
+            with patch("urllib.request.urlopen") as mock_urlopen:
+                am._post_webhook({"text": "test alert"})
+                mock_urlopen.assert_called_once()
+        finally:
+            s.alert_webhook_url = original
+
+    def test_post_webhook_failure_logs_warning(self) -> None:
+        """_post_webhook logs a warning when the webhook call fails."""
+        import src.alert_manager as am
+        from src.settings import settings as s
+        from unittest.mock import patch
+        original = s.alert_webhook_url
+        s.alert_webhook_url = "https://hooks.example.com/hook"
+        try:
+            with patch(
+                "urllib.request.urlopen",
+                side_effect=ConnectionError("connection refused"),
+            ):
+                # Should log warning, not raise
+                am._post_webhook({"text": "test"})
+        finally:
+            s.alert_webhook_url = original
+
+    # ── _evaluate_once ───────────────────────────────────────────────────
+
+    def test_evaluate_once_clean_state(self) -> None:
+        """_evaluate_once handles a clean state without crashing."""
+        import src.alert_manager as am
+        am._evaluate_once()
+        assert am._consecutive_failures == 0
+
+    def test_evaluate_once_with_errors(self) -> None:
+        """_evaluate_once increments consecutive_failures when alerts fire."""
+        import src.alert_manager as am
+        import time
+        now = time.time()
+        for _ in range(10):
+            am._request_window.append(now)
+            am._error_window.append(now)
+        am._evaluate_once()
+        assert am._consecutive_failures == 1
+
+    def test_evaluate_once_resets_on_clean(self) -> None:
+        """_evaluate_once resets consecutive_failures to 0 when no alerts."""
+        import src.alert_manager as am
+        am._consecutive_failures = 10
+        am._evaluate_once()  # empty windows → no alerts → reset
+        assert am._consecutive_failures == 0
+
+    def test_evaluate_once_consecutive_escalation(self) -> None:
+        """_evaluate_once fires escalation alert after 5 consecutive alert cycles."""
+        import src.alert_manager as am
+        import time
+        for _ in range(5):
+            # Clear suppression so each cycle fires the error_rate alert
+            am._last_alert.clear()
+            am._error_window.clear()
+            am._request_window.clear()
+            now = time.time()
+            for _ in range(10):
+                am._request_window.append(now)
+                am._error_window.append(now)
+            am._evaluate_once()
+        assert am._consecutive_failures >= 5
+
+
+# ---------------------------------------------------------------------------
+# tracing.py — Span and Tracer edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestTracingCoverage:
+    """Coverage for tracing.py: Span, Tracer edge cases."""
+
+    def test_span_end_called_twice(self) -> None:
+        """Span.end() is idempotent — second call does not raise."""
+        from src.tracing import tracer
+        span = tracer.start_span("test_span")
+        span.end()
+        span.end()  # must not raise
+        assert span._end is not None
+
+    def test_span_duration_zero_when_not_ended(self) -> None:
+        """duration_ms returns 0 for an unended span."""
+        from src.tracing import tracer
+        span = tracer.start_span("test_span")
+        assert span.duration_ms == 0.0
+        span.end()
+
+    def test_span_duration_positive_after_end(self) -> None:
+        """duration_ms returns > 0 after the span is ended."""
+        from src.tracing import tracer
+        span = tracer.start_span("test_span")
+        span.end()
+        assert span.duration_ms > 0.0
+
+    def test_span_to_traceparent(self) -> None:
+        """to_traceparent returns a valid W3C traceparent string."""
+        from src.tracing import Span
+        span = Span("test", trace_id="abc123def4567890", span_id="xyz7890123456789")
+        tp = span.to_traceparent()
+        assert tp.startswith("00-")
+        assert tp.endswith("-01")
+        assert "abc123def4567890" in tp
+
+    def test_span_repr(self) -> None:
+        """Span repr includes the name and trace ID."""
+        from src.tracing import Span
+        span = Span("my_span", trace_id="aaaabbbbccccdddd", span_id="eeeeffff00001111")
+        r = repr(span)
+        assert "Span(" in r
+        assert "my_span" in r
+
+    def test_span_context_manager(self) -> None:
+        """Span used as context manager calls end() on exit."""
+        from src.tracing import tracer
+        with tracer.start_span("ctx_span") as span:
+            assert span._end is None
+        assert span._end is not None
+
+    def test_tracer_span_from_traceparent(self) -> None:
+        """span_from_traceparent parses a W3C traceparent header."""
+        from src.tracing import tracer
+        span = tracer.span_from_traceparent(
+            "incoming", "00-abc123def4567890ffff0000aaaabbbb-xyz7890123456789-01"
+        )
+        assert span.name == "incoming"
+        assert "abc123def4567890ffff0000aaaabbbb" in span.trace_id
+        assert span.span_id is not None
+
+    def test_traceparent_from_env_default(self) -> None:
+        """_traceparent_from_env returns None when TRACEPARENT is not set."""
+        from src.tracing import _traceparent_from_env
+        # Unset to ensure clean state
+        import os
+        os.environ.pop("TRACEPARENT", None)
+        assert _traceparent_from_env() is None
+
+    def test_traceparent_from_env_set(self) -> None:
+        """_traceparent_from_env returns the env var value when set."""
+        from src.tracing import _traceparent_from_env
+        import os
+        os.environ["TRACEPARENT"] = "00-test-01"
+        try:
+            assert _traceparent_from_env() == "00-test-01"
+        finally:
+            os.environ.pop("TRACEPARENT", None)

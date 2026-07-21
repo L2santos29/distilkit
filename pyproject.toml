@@ -60,7 +60,7 @@ omit = ["src/templates/*"]
 
 [tool.coverage.report]
 # Enforce ≥74% coverage on the src/ package.
-fail_under = 74
+fail_under = 80
 show_missing = true
 skip_covered = false
 precision = 1

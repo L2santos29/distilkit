@@ -12,3 +12,4 @@ runs/
 data/
 runs/
 .DS_Store
+.coverage

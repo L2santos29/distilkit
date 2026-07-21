@@ -19,7 +19,11 @@ import pytest
 import torch
 from fastapi.testclient import TestClient
 
+from src.settings import settings
 from src.webapp import app
+
+# Disable rate limiting in tests (single IP makes many rapid requests).
+settings.rate_limit_per_minute = 0
 
 client = TestClient(app)
 
@@ -35,8 +39,10 @@ class TestInputValidationRegression:
     Bug: The /api/train endpoint accepted any numeric value (negative
     epochs, alpha > 1, etc.) because only the model *names* were validated
     against controlled lists.
-    Fix: Added ``_clamp_and_validate()`` that raises HTTPException(400)
-    when a value falls outside [lo, hi].
+    Fix: Replaced bare ``body: dict`` with a Pydantic ``TrainRequest``
+    model that uses ``Field(ge=..., le=...)`` to enforce numeric ranges
+    at the framework level. Pydantic ``RequestValidationError`` is
+    converted to HTTP 400 via a custom exception handler.
     """
 
     def test_negative_epochs_rejected(self):

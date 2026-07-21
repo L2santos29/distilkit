@@ -279,7 +279,7 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
     else:
         # PyTorch model
         try:
-            model = torch.load(args.model, map_location=args.target)
+            model = torch.load(args.model, map_location=args.target, weights_only=False)
         except Exception as e:
             logger.error(f"❌ Failed to load model {args.model}: {e}")
             return
@@ -289,8 +289,9 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
             from src.student import MiniCNN
 
             try:
-                model = MiniCNN(num_classes=10)
-                model.load_state_dict(torch.load(args.model, map_location=args.target))
+                student = MiniCNN(num_classes=10)
+                student.load_state_dict(model["state_dict"])
+                model = student
             except Exception as e:
                 logger.error(f"❌ Failed to load checkpoint {args.model}: {e}")
                 return

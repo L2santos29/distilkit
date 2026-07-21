@@ -1,0 +1,59 @@
+# DistilKit — Staging Environment
+#
+# Simulates a production-like deployment for pre-release validation.
+# Uses the built image (no source mount), enables auth, restricted CORS,
+# rate limiting, and a separate port.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
+#
+# Smoke test:
+#   curl -s http://localhost:7861/health
+#   curl -s -H "X-API-Key: changeme-staging-key" http://localhost:7861/api/v1/config
+# ============================================================================
+
+services:
+  distilkit:
+    # Use a pre-built image instead of building from source.
+    image: distilkit:staging
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: distilkit-staging
+    ports:
+      - "7861:7860"       # Different port from dev (7860)
+    environment:
+      # ── Production-like settings ──────────────────────────────────
+      - DEVICE=cpu
+      - HOST=0.0.0.0
+      - PORT=7860
+      - API_ONLY=false
+      - RUNS_DIR=/app/runs
+      - DATA_DIR=/app/data
+      - CHECKPOINTS_DIR=/app/checkpoints
+      - LOG_LEVEL=INFO
+      # ── Security (mimics production) ──────────────────────────────
+      - API_KEY=${STAGING_API_KEY:-changeme-staging-key}
+      - CORS_ORIGINS=${STAGING_CORS_ORIGINS:-http://localhost:7861,https://staging.distilkit.example.com}
+      - RATE_LIMIT_PER_MINUTE=60
+      - HSTS_MAX_AGE=31536000
+    volumes:
+      # Use persistent volumes (no source mount — tests the actual image)
+      - distilkit_staging_data:/app/data
+      - distilkit_staging_ckpt:/app/checkpoints
+      - distilkit_staging_runs:/app/runs
+    # No --reload flag — runs the production entrypoint
+    command: python -m src.webapp
+    restart: unless-stopped
+    # Health check uses the orchestration-ready endpoint
+    healthcheck:
+      test: curl -sf http://localhost:7860/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  distilkit_staging_data:
+  distilkit_staging_ckpt:
+  distilkit_staging_runs:

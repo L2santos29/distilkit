@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -34,6 +34,7 @@
     }
   </script>
   <style>
+    *:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; border-radius: 4px; }
     body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
     body.light-bg { background-color: #f8fafc; }
     .skeleton-dark { background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%); background-size: 200% 100%; animation: pulse 1.5s ease-in-out infinite; }
@@ -275,7 +276,7 @@
 <body class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 min-h-screen transition-colors duration-200">
 
   <!-- ═══ TOAST CONTAINER ═══ -->
-  <div id="toast-container"></div>
+  <div id="toast-container" role="alert" aria-live="polite"></div>
 
   <!-- ═══ CONFIRM MODAL ═══ -->
   <div id="confirm-overlay" class="hidden">
@@ -283,8 +284,8 @@
       <h3>⛔ Cancel Training?</h3>
       <p>The current epoch will be interrupted and any unsaved progress will be lost.<br>You can resume later from the last checkpoint.</p>
       <div class="actions">
-        <button class="btn-secondary" id="confirm-no">Keep Training</button>
-        <button class="btn-danger" id="confirm-yes">⛔ Yes, Cancel</button>
+        <button class="btn-secondary" id="confirm-no" aria-label="Keep training, dismiss cancel">Keep Training</button>
+        <button class="btn-danger" id="confirm-yes" aria-label="Confirm cancellation">⛔ Yes, Cancel</button>
       </div>
     </div>
   </div>
@@ -292,7 +293,7 @@
   <!-- ═══ HEADER ═══ -->
   <header class="border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur sticky top-0 z-50">
     <div class="max-w-7xl mx-auto px-3 sm:px-4 py-2 sm:py-3 flex items-center gap-2 sm:gap-3">
-      <span class="text-xl sm:text-2xl">⚡</span>
+      <span class="text-xl sm:text-2xl" aria-hidden="true">⚡</span>
       <h1 class="text-lg sm:text-xl font-bold bg-gradient-to-r from-brand-400 to-purple-400 bg-clip-text text-transparent">
         DistilKit
       </h1>
@@ -320,7 +321,7 @@
         <div id="config-panel" class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5 space-y-4">
           <h2 class="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide flex items-center gap-2">
             <button id="config-toggle" class="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                    title="Toggle config panel" aria-label="Toggle config panel">
+                    title="Toggle config panel" aria-label="Toggle config panel" aria-expanded="true">
               <svg id="config-chevron" class="w-4 h-4 transition-transform duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
               </svg>
@@ -445,19 +446,22 @@
               <button data-preset="quick"
                       class="preset-btn py-1.5 rounded-lg text-xs font-medium transition-all duration-150
                              bg-amber-50 dark:bg-amber-900/20 hover:bg-amber-100 dark:hover:bg-amber-900/40
-                             text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/50">
+                             text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/50"
+                      aria-label="Quick preset: 5 epochs">
                 🚀<br>Quick
               </button>
               <button data-preset="balanced"
                       class="preset-btn py-1.5 rounded-lg text-xs font-medium transition-all duration-150
                              bg-brand-50 dark:bg-brand-900/20 hover:bg-brand-100 dark:hover:bg-brand-900/40
-                             text-brand-700 dark:text-brand-400 border border-brand-200 dark:border-brand-800/50">
+                             text-brand-700 dark:text-brand-400 border border-brand-200 dark:border-brand-800/50"
+                      aria-label="Balanced preset: 10 epochs">
                 🎯<br>Balanced
               </button>
               <button data-preset="ultrafast"
                       class="preset-btn py-1.5 rounded-lg text-xs font-medium transition-all duration-150
                              bg-emerald-50 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/40
-                             text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50">
+                             text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50"
+                      aria-label="Ultra-fast preset: 2 epochs">
                 ⚡<br>Ultra-fast
               </button>
             </div>
@@ -514,7 +518,7 @@
         <div class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5 space-y-2">
           <h2 class="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">📊 Status</h2>
           <div class="space-y-1 text-sm" id="status-card">
-            <p class="text-slate-400 dark:text-slate-500 italic">Waiting to start...</p>
+            <p class="text-slate-400 dark:text-slate-500 italic" role="status">Waiting to start...</p>
           </div>
         </div>
       </section>
@@ -547,7 +551,7 @@
             </div>
           </div>
           <div id="chart-wrapper" class="relative" style="height:180px;">
-            <canvas id="training-chart"></canvas>
+            <canvas id="training-chart" aria-label="Training loss and accuracy chart" role="img"></canvas>
             <div id="chart-empty" class="absolute inset-0 flex flex-col items-center justify-center text-slate-400 dark:text-slate-600">
               <p class="text-4xl mb-2">📊</p>
               <p class="text-sm">Run a training to see the chart</p>
@@ -565,7 +569,8 @@
         <div class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5">
           <h2 class="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">📋 Logs</h2>
           <pre id="logs-box"
-               class="bg-slate-100 dark:bg-slate-950 rounded-lg p-3 text-xs font-mono text-slate-600 dark:text-slate-400 h-40 overflow-y-auto leading-relaxed select-text">Waiting to start...</pre>
+               class="bg-slate-100 dark:bg-slate-950 rounded-lg p-3 text-xs font-mono text-slate-600 dark:text-slate-400 h-40 overflow-y-auto leading-relaxed select-text"
+               aria-live="polite" aria-label="Training log output">Waiting to start...</pre>
         </div>
 
         <!-- History -->
@@ -625,7 +630,7 @@
     });
 
     // ─── Fetch config from API ───
-    fetch('/api/config')
+    fetch('/api/v1/config')
       .then(r => r.json())
       .then(config => {
         // Dataset dropdown
@@ -742,13 +747,63 @@
       return n.toLocaleString();
     }
 
+    // ─── HTML sanitizer for XSS prevention ───
+    function escapeHtml(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    // ─── Auth helpers ───
+    function getAuthHeaders() {
+      return apiKey ? { 'X-API-Key': apiKey } : {};
+    }
+
+    async function authFetch(url, opts = {}) {
+      const headers = { ...getAuthHeaders(), ...opts.headers };
+      const res = await fetch(url, { ...opts, headers });
+      if (res.status === 401 && apiKey) {
+        // Key was rejected — clear it and prompt again
+        apiKey = '';
+        sessionStorage.removeItem('distilkit_api_key');
+        promptApiKey();
+        throw new Error('Authentication required');
+      }
+      return res;
+    }
+
+    function authEventSource(url) {
+      // EventSource doesn't support custom headers, so pass key via query param
+      const sep = url.includes('?') ? '&' : '?';
+      const finalUrl = apiKey ? url + sep + 'api_key=' + encodeURIComponent(apiKey) : url;
+      return new EventSource(finalUrl);
+    }
+
+    async function promptApiKey() {
+      const key = prompt('🔑 Enter API key to access DistilKit:');
+      if (key) {
+        apiKey = key;
+        sessionStorage.setItem('distilkit_api_key', key);
+      }
+    }
+
     // ─── Toast notifications ───
     function showToast(message, type = 'info', duration = 4000) {
       const container = document.getElementById('toast-container');
-      const icons = { success: '✅', error: '❌', info: 'ℹ️', warning: '⚠️' };
+      const icons = { success: '\u2705', error: '\u274c', info: '\u2139\ufe0f', warning: '\u26a0\ufe0f' };
       const toast = document.createElement('div');
       toast.className = `toast toast-${type}`;
-      toast.innerHTML = `<span>${icons[type] || 'ℹ️'}</span><span>${message}</span>`;
+      // Use textContent to prevent XSS — message may contain user-influenced data
+      const iconSpan = document.createElement('span');
+      iconSpan.textContent = icons[type] || '\u2139\ufe0f';
+      const msgSpan = document.createElement('span');
+      msgSpan.textContent = message;
+      toast.appendChild(iconSpan);
+      toast.appendChild(msgSpan);
       container.appendChild(toast);
       // Remove after duration
       setTimeout(() => {
@@ -844,6 +899,7 @@
     _drawFavicon(1.0);
 
     // ─── State ───
+    let apiKey = '';
     let currentTaskId = null;
     let eventSource = null;
     let trainedStudentId = null;
@@ -980,6 +1036,24 @@
     // Load config from URL on page load
     applyConfigFromQuery();
 
+    // ─── Auth check on load ───
+    (async function initAuth() {
+      try {
+        const res = await fetch('/api/v1/config');
+        const cfg = await res.json();
+        if (cfg.auth_required) {
+          const stored = sessionStorage.getItem('distilkit_api_key');
+          if (stored) {
+            apiKey = stored;
+          } else {
+            await promptApiKey();
+          }
+        }
+      } catch (_) {
+        // Config fetch failed — auth state unknown, continue without key
+      }
+    })();
+
     // ─── Training ───
     $('train-btn').addEventListener('click', async () => {
       if (currentTaskId) {
@@ -1020,7 +1094,7 @@
 
       try {
         // Start training
-        const res = await fetch('/api/train', {
+        const res = await authFetch('/api/v1/train', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(config),
@@ -1033,7 +1107,7 @@
         $('btn-text').textContent = 'Training...';
 
         // Connect to SSE
-        eventSource = new EventSource(`/api/train/${currentTaskId}/stream`);
+        eventSource = authEventSource(`/api/v1/train/${currentTaskId}/stream`);
 
         eventSource.onmessage = (e) => {
           const data = JSON.parse(e.data);
@@ -1086,19 +1160,19 @@
       // Status
       if (data.current_epoch != null && data.total_epochs) {
         let html = `
-          <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Status</span><span class="text-brand-600 dark:text-brand-400 font-medium capitalize">${data.status}</span></div>
-          <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Epoch</span><span class="font-mono text-slate-800 dark:text-slate-100">${data.current_epoch} / ${data.total_epochs}</span></div>`;
+          <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Status</span><span class="text-brand-600 dark:text-brand-400 font-medium capitalize">${escapeHtml(data.status)}</span></div>
+          <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Epoch</span><span class="font-mono text-slate-800 dark:text-slate-100">${escapeHtml(data.current_epoch)} / ${escapeHtml(data.total_epochs)}</span></div>`;
         if (data.current_loss != null) {
-          html += `<div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Loss</span><span class="font-mono text-brand-600 dark:text-brand-400">${data.current_loss.toFixed(4)}</span></div>`;
+          html += `<div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Loss</span><span class="font-mono text-brand-600 dark:text-brand-400">${escapeHtml(data.current_loss.toFixed(4))}</span></div>`;
         }
         if (data.current_acc != null) {
-          html += `<div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Accuracy</span><span class="font-mono text-emerald-500 dark:text-emerald-400">${(data.current_acc * 100).toFixed(2)}%</span></div>`;
+          html += `<div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Accuracy</span><span class="font-mono text-emerald-500 dark:text-emerald-400">${escapeHtml((data.current_acc * 100).toFixed(2))}%</span></div>`;
         }
         if (data.eta_seconds != null && data.eta_seconds > 0) {
           const eta = data.eta_seconds > 60
             ? Math.round(data.eta_seconds / 60) + 'm ' + Math.round(data.eta_seconds % 60) + 's'
             : Math.round(data.eta_seconds) + 's';
-          html += `<div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">ETA</span><span class="font-mono text-yellow-500 dark:text-yellow-400">${eta}</span></div>`;
+          html += `<div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">ETA</span><span class="font-mono text-yellow-500 dark:text-yellow-400">${escapeHtml(eta)}</span></div>`;
         }
         $('status-card').innerHTML = html;
       }
@@ -1159,10 +1233,10 @@
 
       // Status
       $('status-card').innerHTML = `
-        <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Status</span><span class="text-emerald-500 dark:text-emerald-400 font-medium">✅ Complete</span></div>
-        <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Final Loss</span><span class="font-mono text-brand-600 dark:text-brand-400">${r.final_loss}</span></div>
-        <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Final Accuracy</span><span class="font-mono text-emerald-500 dark:text-emerald-400">${(r.final_accuracy * 100).toFixed(2)}%</span></div>
-        <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Speedup</span><span class="font-mono text-yellow-500 dark:text-yellow-400">${r.speedup}x</span></div>`;
+        <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Status</span><span class="text-emerald-500 dark:text-emerald-400 font-medium">\u2705 Complete</span></div>
+        <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Final Loss</span><span class="font-mono text-brand-600 dark:text-brand-400">${escapeHtml(r.final_loss)}</span></div>
+        <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Final Accuracy</span><span class="font-mono text-emerald-500 dark:text-emerald-400">${escapeHtml((r.final_accuracy * 100).toFixed(2))}%</span></div>
+        <div class="flex justify-between"><span class="text-slate-500 dark:text-slate-400">Speedup</span><span class="font-mono text-yellow-500 dark:text-yellow-400">${escapeHtml(r.speedup)}x</span></div>`;
 
       // Results section
       $('results-section').classList.remove('hidden');
@@ -1174,25 +1248,25 @@
           <!-- Latency bar -->
           <div>
             <div class="flex justify-between text-xs mb-1">
-              <span class="text-slate-500 dark:text-slate-400 font-medium">⏱️ Latency</span>
+              <span class="text-slate-500 dark:text-slate-400 font-medium">\u23f1\ufe0f Latency</span>
               <span class="text-slate-400 dark:text-slate-500">lower is better</span>
             </div>
             <div class="space-y-1">
               <div class="flex items-center gap-2 text-xs">
-                <span class="w-16 sm:w-20 text-right text-slate-500 dark:text-slate-400 truncate" title="${r.teacher_name}">🧠 ${r.teacher_name}</span>
+                <span class="w-16 sm:w-20 text-right text-slate-500 dark:text-slate-400 truncate" title="${escapeHtml(r.teacher_name)}">\U0001f9e0 ${escapeHtml(r.teacher_name)}</span>
                 <div class="flex-1 bg-slate-200 dark:bg-slate-700 rounded-full h-5 overflow-hidden relative">
                   <div class="h-full bg-red-400/60 dark:bg-red-500/40 rounded-full flex items-center justify-end px-2 transition-all"
                        style="width:100%">
-                    <span class="text-xs font-mono text-red-700 dark:text-red-300">${r.teacher_latency_ms} ms</span>
+                    <span class="text-xs font-mono text-red-700 dark:text-red-300">${escapeHtml(r.teacher_latency_ms)} ms</span>
                   </div>
                 </div>
               </div>
               <div class="flex items-center gap-2 text-xs">
-                <span class="w-16 sm:w-20 text-right text-slate-500 dark:text-slate-400 truncate" title="${r.student_name}">⚡ ${r.student_name}</span>
+                <span class="w-16 sm:w-20 text-right text-slate-500 dark:text-slate-400 truncate" title="${escapeHtml(r.student_name)}">\u26a1 ${escapeHtml(r.student_name)}</span>
                 <div class="flex-1 bg-slate-200 dark:bg-slate-700 rounded-full h-5 overflow-hidden relative">
                   <div class="h-full bg-emerald-400/60 dark:bg-emerald-500/40 rounded-full flex items-center justify-end px-2 transition-all"
-                       style="width:${Math.min(r.student_latency_ms / r.teacher_latency_ms * 100, 100)}%">
-                    <span class="text-xs font-mono text-emerald-700 dark:text-emerald-300">${r.student_latency_ms} ms</span>
+                       style="width:${escapeHtml(Math.min(r.student_latency_ms / r.teacher_latency_ms * 100, 100))}%">
+                    <span class="text-xs font-mono text-emerald-700 dark:text-emerald-300">${escapeHtml(r.student_latency_ms)} ms</span>
                   </div>
                 </div>
               </div>
@@ -1202,25 +1276,25 @@
           <!-- Throughput bar -->
           <div>
             <div class="flex justify-between text-xs mb-1">
-              <span class="text-slate-500 dark:text-slate-400 font-medium">⚡ Throughput</span>
+              <span class="text-slate-500 dark:text-slate-400 font-medium">\u26a1 Throughput</span>
               <span class="text-slate-400 dark:text-slate-500">higher is better</span>
             </div>
             <div class="space-y-1">
               <div class="flex items-center gap-2 text-xs">
-                <span class="w-16 sm:w-20 text-right text-slate-500 dark:text-slate-400 truncate" title="${r.teacher_name}">🧠 ${r.teacher_name}</span>
+                <span class="w-16 sm:w-20 text-right text-slate-500 dark:text-slate-400 truncate" title="${escapeHtml(r.teacher_name)}">\U0001f9e0 ${escapeHtml(r.teacher_name)}</span>
                 <div class="flex-1 bg-slate-200 dark:bg-slate-700 rounded-full h-5 overflow-hidden relative">
                   <div class="h-full bg-red-400/60 dark:bg-red-500/40 rounded-full flex items-center justify-end px-2 transition-all"
-                       style="width:${Math.min(r.teacher_throughput / r.student_throughput * 100, 100)}%">
-                    <span class="text-xs font-mono text-red-700 dark:text-red-300">${r.teacher_throughput} img/s</span>
+                       style="width:${escapeHtml(Math.min(r.teacher_throughput / r.student_throughput * 100, 100))}%">
+                    <span class="text-xs font-mono text-red-700 dark:text-red-300">${escapeHtml(r.teacher_throughput)} img/s</span>
                   </div>
                 </div>
               </div>
               <div class="flex items-center gap-2 text-xs">
-                <span class="w-16 sm:w-20 text-right text-slate-500 dark:text-slate-400 truncate" title="${r.student_name}">⚡ ${r.student_name}</span>
+                <span class="w-16 sm:w-20 text-right text-slate-500 dark:text-slate-400 truncate" title="${escapeHtml(r.student_name)}">\u26a1 ${escapeHtml(r.student_name)}</span>
                 <div class="flex-1 bg-slate-200 dark:bg-slate-700 rounded-full h-5 overflow-hidden relative">
                   <div class="h-full bg-emerald-400/60 dark:bg-emerald-500/40 rounded-full flex items-center justify-end px-2 transition-all"
                        style="width:100%">
-                    <span class="text-xs font-mono text-emerald-700 dark:text-emerald-300">${r.student_throughput} img/s</span>
+                    <span class="text-xs font-mono text-emerald-700 dark:text-emerald-300">${escapeHtml(r.student_throughput)} img/s</span>
                   </div>
                 </div>
               </div>
@@ -1230,22 +1304,22 @@
           <!-- Parameter count & compression cards -->
           <div class="flex flex-wrap gap-3 text-xs pt-1">
             <div class="bg-slate-100 dark:bg-slate-800 rounded-lg px-3 py-2 flex items-center gap-2">
-              <span class="text-slate-400">🧠 Params</span>
-              <span class="font-mono text-red-500 dark:text-red-400">${formatNumber(r.teacher_params)}</span>
-              <span class="text-slate-300 dark:text-slate-600">→</span>
-              <span class="font-mono text-emerald-500 dark:text-emerald-400">${formatNumber(r.student_params)}</span>
+              <span class="text-slate-400">\U0001f9e0 Params</span>
+              <span class="font-mono text-red-500 dark:text-red-400">${escapeHtml(formatNumber(r.teacher_params))}</span>
+              <span class="text-slate-300 dark:text-slate-600">\u2192</span>
+              <span class="font-mono text-emerald-500 dark:text-emerald-400">${escapeHtml(formatNumber(r.student_params))}</span>
             </div>
           </div>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
           <div class="bg-slate-100 dark:bg-slate-800 rounded-lg p-3 text-center">
             <p class="text-xs text-slate-500 mb-0.5">Compression</p>
-            <p class="text-lg font-bold text-brand-600 dark:text-brand-400">${r.compression_pct}%</p>
+            <p class="text-lg font-bold text-brand-600 dark:text-brand-400">${escapeHtml(r.compression_pct)}%</p>
             <p class="text-xs text-slate-400 dark:text-slate-600">smaller than teacher</p>
           </div>
           <div class="bg-slate-100 dark:bg-slate-800 rounded-lg p-3 text-center">
             <p class="text-xs text-slate-500 mb-0.5">Speedup</p>
-            <p class="text-lg font-bold text-yellow-500 dark:text-yellow-400">${r.speedup}×</p>
+            <p class="text-lg font-bold text-yellow-500 dark:text-yellow-400">${escapeHtml(r.speedup)}×</p>
             <p class="text-xs text-slate-400 dark:text-slate-600">faster inference</p>
           </div>
         </div>`;
@@ -1273,7 +1347,7 @@
       $('btn-text').textContent = 'Start Training';
       $('progress-label').textContent = '❌ Failed';
       $('progress-bar').style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
-      $('status-card').innerHTML = `<p class="text-red-400">❌ ${error}</p>`;
+      $('status-card').innerHTML = `<p class="text-red-400">\u274c ${escapeHtml(error)}</p>`;
       appendLogs('❌ Error: ' + error);
     }
 
@@ -1285,20 +1359,26 @@
       }
       $('export-status').textContent = '⏳ Exporting...';
       try {
-        const res = await fetch(`/api/export/${trainedStudentId}`, {
+        const res = await authFetch(`/api/v1/export/${trainedStudentId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ format: fmt }),
         });
         const data = await res.json();
         if (res.ok) {
-          // Trigger browser download
-          const a = document.createElement('a');
-          a.href = `/api/download/${data.filename}`;
-          a.download = data.filename;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
+          // Trigger browser download via authenticated fetch -> blob
+          const dlRes = await authFetch(`/api/v1/download/${data.filename}`);
+          if (dlRes.ok) {
+            const blob = await dlRes.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = data.filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(blobUrl);
+          }
           $('export-status').textContent = `✅ Downloaded: ${data.filename}`;
           showToast(`📦 Exported: ${data.filename}`, 'success');
         } else {
@@ -1328,7 +1408,7 @@
       $('confirm-overlay').classList.add('hidden');
       if (!currentTaskId) return;
       try {
-        await fetch(`/api/train/${currentTaskId}/cancel`, { method: 'POST' });
+        await authFetch(`/api/v1/train/${currentTaskId}/cancel`, { method: 'POST' });
       } catch (err) {
         console.error('Cancel failed:', err);
       }
@@ -1351,7 +1431,7 @@
     // ─── Load run history ───
     (async function loadHistory() {
       try {
-        const res = await fetch('/api/history');
+        const res = await authFetch('/api/v1/history');
         const runs = await res.json();
         const container = document.getElementById('history-content');
         if (!runs || runs.length === 0) {
@@ -1377,13 +1457,13 @@
           const params = res.student_params ? formatNumber(res.student_params) : '--';
           const color = status === 'completed' ? 'text-slate-700 dark:text-slate-300' : 'text-red-400';
           html += `<tr class="border-b border-slate-200 dark:border-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-800/30 ${color}">` +
-            `<td class="py-1.5 px-2">${when}</td>` +
-            `<td class="py-1.5 px-2">${cfg.dataset || '--'}</td>` +
-            `<td class="py-1.5 px-2">${cfg.teacher || '--'}</td>` +
-            `<td class="py-1.5 px-2">${cfg.student || '--'}</td>` +
-            `<td class="text-right py-1.5 px-2 font-mono">${params}</td>` +
-            `<td class="text-right py-1.5 px-2 font-mono text-emerald-400">${acc}</td>` +
-            `<td class="text-right py-1.5 px-2 font-mono text-yellow-400">${speedup}</td>` +
+            `<td class="py-1.5 px-2">${escapeHtml(when)}</td>` +
+            `<td class="py-1.5 px-2">${escapeHtml(cfg.dataset || '--')}</td>` +
+            `<td class="py-1.5 px-2">${escapeHtml(cfg.teacher || '--')}</td>` +
+            `<td class="py-1.5 px-2">${escapeHtml(cfg.student || '--')}</td>` +
+            `<td class="text-right py-1.5 px-2 font-mono">${escapeHtml(params)}</td>` +
+            `<td class="text-right py-1.5 px-2 font-mono text-emerald-400">${escapeHtml(acc)}</td>` +
+            `<td class="text-right py-1.5 px-2 font-mono text-yellow-400">${escapeHtml(speedup)}</td>` +
             '</tr>';
         });
         html += '</tbody></table></div>';

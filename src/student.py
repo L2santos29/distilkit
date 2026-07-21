@@ -4,6 +4,11 @@ Constructs compact student models designed to be smaller, faster versions
 of their teacher counterparts for knowledge distillation.
 """
 
+# Base channel counts for each convolutional stage at width=1.0.
+# These are scaled by the ``width`` parameter to control model size.
+_CNN_BASE_CHANNELS: tuple[int, int, int, int] = (32, 64, 128, 256)
+_RESNET_BASE_CHANNELS: tuple[int, int] = (16, 32)
+
 import torch
 import torch.nn as nn
 
@@ -16,16 +21,10 @@ class MiniCNN(nn.Module):
     """
 
     def __init__(self, in_channels: int = 3, num_classes: int = 10, width: float = 1.0):
-        """Build MiniCNN with width-scalable convolutional layers.
-
-        Args:
-            in_channels: Number of input image channels.
-            num_classes: Number of output classes.
-            width: Channel multiplier for compression control.
-        """
+        """Four-block convolutional net where ``width`` scales all channels (params ≈ width²)."""
         super().__init__()
         w = width
-        c1, c2, c3, c4 = [int(32 * w), int(64 * w), int(128 * w), int(256 * w)]
+        c1, c2, c3, c4 = [int(b * w) for b in _CNN_BASE_CHANNELS]
         # Ensure at least 1 channel per layer
         c1, c2, c3, c4 = max(c1, 1), max(c2, 1), max(c3, 1), max(c4, 1)
 
@@ -62,16 +61,10 @@ class MiniResNet(nn.Module):
     """Tiny ResNet-style student with configurable width."""
 
     def __init__(self, in_channels: int = 3, num_classes: int = 10, width: float = 1.0):
-        """Build MiniResNet with residual blocks and scalable width.
-
-        Args:
-            in_channels: Number of input image channels.
-            num_classes: Number of output classes.
-            width: Channel multiplier for compression control.
-        """
+        """Two-stage residual net where ``width`` scales channels (params ≈ width²)."""
         super().__init__()
         w = width
-        c1, c2 = int(16 * w), int(32 * w)
+        c1, c2 = [int(b * w) for b in _RESNET_BASE_CHANNELS]
         c1, c2 = max(c1, 1), max(c2, 1)
 
         self.features = nn.Sequential(
@@ -100,12 +93,6 @@ class ResidualBlock(nn.Module):
     """Basic residual block with two conv layers."""
 
     def __init__(self, in_channels: int, out_channels: int):
-        """Build a residual block.
-
-        Args:
-            in_channels: Input channel count.
-            out_channels: Output channel count.
-        """
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(out_channels)
@@ -138,20 +125,11 @@ def build_student(
     num_classes: int = 10,
     in_channels: int = 3,
 ) -> nn.Module:
-    """Build a student model sized to approximate a target compression ratio.
+    """Build a student whose parameter count approximates ``teacher × compression_ratio``.
 
-    The width multiplier is computed so that the student has roughly
-    ``compression_ratio * teacher_params`` parameters.
-
-    Args:
-        teacher: Teacher model (used to count params when compression_ratio is set).
-        student_type: Name of the student architecture.
-        compression_ratio: Target ratio of student/teacher parameters.
-        num_classes: Number of output classes.
-        in_channels: Number of input channels (1 for MNIST, 3 for CIFAR-10).
-
-    Returns:
-        Student model instance.
+    The width multiplier is derived from the sqrt of the target/base parameter
+    ratio because CNN channel counts scale roughly quadratically with params.
+    When *teacher* is ``None`` or *compression_ratio* is 0, width=1.0 is used.
     """
     if student_type not in STUDENT_REGISTRY:
         raise ValueError(

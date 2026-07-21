@@ -15,8 +15,9 @@ from datetime import datetime
 
 import torch.nn as nn
 
+from src.alert_manager import record_task_failure
 from src.log_config import logger
-from src.pipeline import DatasetError, run_distillation_pipeline
+from src.pipeline import DatasetError, PipelineError, run_distillation_pipeline
 from src.settings import settings
 
 
@@ -304,16 +305,26 @@ class TrainingTask:
                     "are smaller and faster to download)."
                 )
                 self.status = "failed"
+                self.error = "Dataset preparation failed"
+                record_task_failure(self.id)
                 self._save_error_run("failed")
             self._flush_logs()
+
+        except PipelineError as e:
+            self.status = "failed"
+            self.error = str(e)
+            record_task_failure(self.id)
+            self._emit("\n❌ Pipeline error: " + str(e))
+            self._save_error_run("failed")
 
         except Exception as e:
             self.status = "failed"
             self.error = str(e)
+            record_task_failure(self.id)
             import traceback
 
             tb = traceback.format_exc()
-            self._emit(f"\n❌ Error: {e}")
+            self._emit("\n❌ Unexpected error: " + str(e))
             self._emit(tb)
             self._save_error_run("failed")
         finally:

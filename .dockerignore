@@ -28,3 +28,17 @@ install_desktop.sh
 
 # Test cache
 .pytest_cache/
+
+# Monitoring / CI (not needed in runtime)
+.coverage
+prometheus/
+docker-compose*.yml
+
+# Dev / docs (not needed in runtime)
+tests/
+examples/
+scripts/
+PROFILING.md
+*.desktop
+install_desktop.sh
+run_gui.sh

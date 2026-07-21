@@ -14,16 +14,119 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from collections import defaultdict
+from typing import Any
+
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
+from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
 from src import datasets as ds
+from src.alert_manager import evaluate_alerts, record_response, record_task_failure
 from src.log_config import logger, set_request_id
 from src.onnx_export import export_to_onnx, export_to_torchscript
 from src.settings import settings
 from src.task_manager import TrainingTask, _history, _save_run, _tasks, get_history_store, get_tasks
+from src.settings import settings
+from src.tracing import tracer, current_span
+
+
+# ---------------------------------------------------------------------------
+# Authentication — API key via X-API-Key header
+# ---------------------------------------------------------------------------
+
+
+def require_api_key(request: Request) -> None:
+    """Verify the ``X-API-Key`` header matches the configured API key.
+
+    If ``settings.api_key`` is empty, authentication is disabled (local/dev
+    mode).  If a key is configured, every protected endpoint **must** include
+    the ``X-API-Key`` header with the matching value.
+    """
+    if not settings.api_key:
+        return  # Auth disabled — allow everything
+
+    key = request.headers.get("X-API-Key")
+    if not key:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing X-API-Key header. Set API_KEY env var on the server to enable authentication.",
+            headers={"WWW-Authenticate": "APIKey"},
+        )
+    if key != settings.api_key:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid API key.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models for request validation
+# ---------------------------------------------------------------------------
+
+
+class TrainRequest(BaseModel):
+    """Validated request body for POST /api/train."""
+
+    dataset: str = Field(default="CIFAR-10", description="Dataset name")
+    teacher: str = Field(default="resnet18", description="Teacher model architecture")
+    student: str = Field(default="MiniCNN", description="Student model architecture")
+    compression_ratio: float = Field(
+        default=0.05, ge=0.01, le=1.0, description="Target student/teacher parameter ratio"
+    )
+    epochs: int = Field(
+        default=10, ge=1, le=1000, description="Number of training epochs"
+    )
+    temperature: float = Field(
+        default=4.0, ge=0.1, le=100.0, description="Distillation temperature — higher = softer targets"
+    )
+    alpha: float = Field(
+        default=0.7, ge=0.0, le=1.0, description="Distillation loss weight (0-1). Higher = more teacher influence"
+    )
+    patience: int = Field(
+        default=0, ge=0, le=100, description="Early stopping patience (0 to disable)"
+    )
+    batch_size: int = Field(
+        default=64, ge=1, le=4096, description="Training batch size"
+    )
+
+    @field_validator("dataset")
+    @classmethod
+    def _check_dataset(cls, v: str) -> str:
+        if v not in ds.DATASETS:
+            raise ValueError(f"Invalid dataset. Choose: {ds.DATASET_CHOICES}")
+        return v
+
+    @field_validator("teacher")
+    @classmethod
+    def _check_teacher(cls, v: str) -> str:
+        if v not in ds.TEACHER_CHOICES:
+            raise ValueError(f"Invalid teacher. Choose: {ds.TEACHER_CHOICES}")
+        return v
+
+    @field_validator("student")
+    @classmethod
+    def _check_student(cls, v: str) -> str:
+        if v not in ds.STUDENT_CHOICES:
+            raise ValueError(f"Invalid student. Choose: {ds.STUDENT_CHOICES}")
+        return v
+
+
+class ExportRequest(BaseModel):
+    """Validated request body for POST /api/export/{task_id}."""
+
+    format: str = Field(default="onnx", description="Export format")
+
+    @field_validator("format")
+    @classmethod
+    def _check_format(cls, v: str) -> str:
+        if v not in ("onnx", "torchscript"):
+            raise ValueError("Invalid format. Use 'onnx' or 'torchscript'")
+        return v
 
 HERE = Path(__file__).parent
 TEMPLATE_FILE = HERE / "templates" / "index.html"
@@ -40,14 +143,128 @@ _metrics: dict = {
 }
 
 
+# Per-route rate limit overrides: (prefix, requests_per_minute)
+# More sensitive/heavy endpoints get stricter limits.
+_RATE_LIMITS: list[tuple[str, int]] = [
+    ("/health", 60),
+    ("/ready", 60),
+    ("/live", 60),
+    ("/api/train/", 10),  # task detail, SSE stream
+    ("/api/export/", 10),
+]
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Sliding-window rate limiter keyed by client IP.
+
+    Respects ``X-Forwarded-For`` when behind a reverse proxy.  The default
+    limit (``settings.rate_limit_per_minute``) is overridden for specific
+    route prefixes in ``_RATE_LIMITS``.  Set the env var to 0 to disable.
+    """
+
+    def __init__(self, app: Any) -> None:
+        super().__init__(app)
+        self._windows: dict[str, list[float]] = defaultdict(list)
+
+    def _client_ip(self, request: Request) -> str:
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        return forwarded.split(",")[0].strip() or request.client.host or "127.0.0.1"
+
+    def _limit_for(self, path: str) -> int:
+        default = settings.rate_limit_per_minute
+        if default <= 0:
+            return 0  # globally disabled
+        for prefix, limit in _RATE_LIMITS:
+            if path.startswith(prefix):
+                return max(0, limit)
+        return default
+
+    async def dispatch(self, request: Request, call_next):
+        max_reqs = self._limit_for(request.url.path)
+        if max_reqs <= 0:
+            return await call_next(request)
+
+        client = self._client_ip(request)
+        now = time.time()
+        window = self._windows[client]
+
+        # Purge entries older than 60 s
+        cutoff = now - 60.0
+        while window and window[0] < cutoff:
+            window.pop(0)
+
+        if len(window) >= max_reqs:
+            retry_after = int(60.0 - (now - window[0]))
+            return Response(
+                status_code=429,
+                content='{"detail":"Rate limit exceeded. Try again later."}',
+                media_type="application/json",
+                headers={"Retry-After": str(max(retry_after, 1))},
+            )
+
+        window.append(now)
+        return await call_next(request)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security-related HTTP headers to every response.
+
+    Headers added:
+    - ``X-Content-Type-Options: nosniff`` — prevent MIME sniffing.
+    - ``X-Frame-Options: DENY`` — prevent clickjacking.
+    - ``Strict-Transport-Security`` — only if ``settings.hsts_max_age > 0``.
+    - ``Content-Security-Policy`` — restricts script/style sources to
+      trusted CDNs (Tailwind, Chart.js) and self.
+    """
+
+    _CSP = (
+        "default-src 'self';"
+        " script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net;"
+        " style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com;"
+        " img-src 'self' data:;"
+        " font-src 'self';"
+        " connect-src 'self';"
+        " form-action 'self'"
+    )
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        if settings.hsts_max_age > 0:
+            response.headers["Strict-Transport-Security"] = (
+                f"max-age={settings.hsts_max_age}; includeSubDomains"
+            )
+        response.headers["Content-Security-Policy"] = self._CSP
+        return response
+
+
 class RequestIDMiddleware(BaseHTTPMiddleware):
-    """Assign a unique request ID and track request metrics."""
+    """Assign a unique request ID, create a tracing span, and track metrics.
+
+    Propagates W3C ``traceparent`` headers for distributed tracing.
+    Incoming ``traceparent`` headers are honoured so upstream services
+    can link their traces to DistilKit spans.
+    """
 
     async def dispatch(self, request: Request, call_next):
         rid = request.headers.get("X-Request-ID", uuid.uuid4().hex[:12])
         set_request_id(rid)
         path = request.url.path
-        logger.bind(request_id=rid).info(f"→ {request.method} {path}")
+        method = request.method
+
+        # ── Distributed tracing ─────────────────────────────────────
+        traceparent = request.headers.get("traceparent")
+        span_name = f"{method} {path}"
+        if traceparent:
+            span = tracer.span_from_traceparent(span_name, traceparent)
+        else:
+            span = tracer.start_span(span_name)
+        span.set_attribute("http.method", method)
+        span.set_attribute("http.path", path)
+        span.set_attribute("request_id", rid)
+
+        logger.bind(request_id=rid).info(f"→ {method} {path}")
 
         start = time.perf_counter()
         try:
@@ -57,6 +274,8 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             _metrics["requests_total"] += 1
             _metrics["requests_by_path"].setdefault(path, 0)
             _metrics["requests_by_path"][path] += 1
+            span.set_attribute("error", "true")
+            span.end()
             set_request_id("")
             raise
 
@@ -68,8 +287,16 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
         if response.status_code >= 500:
             _metrics["errors_total"] += 1
+            span.set_attribute("error", "true")
 
+        record_response(response.status_code, duration)
+
+        span.set_attribute("http.status_code", response.status_code)
+        span.end()
+
+        # Propagate trace context to the response
         response.headers["X-Request-ID"] = rid
+        response.headers["traceparent"] = span.to_traceparent()
         set_request_id("")
         return response
 
@@ -77,12 +304,14 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: cleanup tasks on shutdown."""
+    task = asyncio.create_task(evaluate_alerts())
     try:
         yield
     finally:
-        for task in _tasks.values():
-            if task.status in ("pending", "running"):
-                task.cancel()
+        task.cancel()
+        for t in _tasks.values():
+            if t.status in ("pending", "running"):
+                t.cancel()
 
 
 app = FastAPI(
@@ -95,8 +324,54 @@ app = FastAPI(
 # Enable gzip compression for all responses (including SSE streams)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# Add request ID middleware (must be after GZip to log original request)
+# CORS — allow cross-origin requests from configured origins
+origins = [
+    o.strip()
+    for o in settings.cors_origins.split(",")
+    if o.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+        "X-API-Key",
+        "X-Request-ID",
+    ],
+    expose_headers=["X-Request-ID"],
+)
+
+# Security headers (set before any other middleware can modify them)
+app.add_middleware(SecurityHeadersMiddleware)
+
+# Rate limiter (before auth so unauthenticated floods are also blocked)
+app.add_middleware(RateLimitMiddleware)
+
+# Request ID middleware (must be after GZip to log original request)
 app.add_middleware(RequestIDMiddleware)
+
+# Versioned API router — all future breaking changes increment this prefix.
+api_router = APIRouter(prefix="/api/v1")
+
+
+# ---------------------------------------------------------------------------
+# Validation error handler — convert Pydantic 422 into 400
+# ---------------------------------------------------------------------------
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+):
+    """Return Pydantic validation errors as HTTP 400 instead of the default 422."""
+    messages: list[str] = []
+    for err in exc.errors():
+        loc = " → ".join(str(l) for l in err.get("loc", []))
+        messages.append(f"{loc}: {err['msg']}" if loc else err["msg"])
+    raise HTTPException(status_code=400, detail="; ".join(messages))
 
 
 @app.get("/health")
@@ -163,43 +438,43 @@ async def index():
                 "openapi": "/openapi.json",
                 "endpoints": [
                     {
-                        "path": "/api/config",
+                        "path": "/api/v1/config",
                         "method": "GET",
                         "description": "Available datasets, teachers, students",
                     },
                     {
-                        "path": "/api/train",
+                        "path": "/api/v1/train",
                         "method": "POST",
                         "description": "Start a new distillation task",
                     },
                     {
-                        "path": "/api/train/{task_id}",
+                        "path": "/api/v1/train/{task_id}",
                         "method": "GET",
                         "description": "Get task state",
                     },
                     {
-                        "path": "/api/train/{task_id}/stream",
+                        "path": "/api/v1/train/{task_id}/stream",
                         "method": "GET",
                         "description": "SSE progress stream",
                     },
                     {
-                        "path": "/api/train/{task_id}/cancel",
+                        "path": "/api/v1/train/{task_id}/cancel",
                         "method": "POST",
                         "description": "Cancel a running task",
                     },
                     {
-                        "path": "/api/export/{task_id}",
+                        "path": "/api/v1/export/{task_id}",
                         "method": "POST",
                         "description": "Export trained model",
                     },
                     {
-                        "path": "/api/download/{filename}",
+                        "path": "/api/v1/download/{filename}",
                         "method": "GET",
                         "description": "Download exported file",
                     },
-                    {"path": "/api/tasks", "method": "GET", "description": "List all tasks"},
+                    {"path": "/api/v1/tasks", "method": "GET", "description": "List all tasks"},
                     {
-                        "path": "/api/history",
+                        "path": "/api/v1/history",
                         "method": "GET",
                         "description": "Completed training runs",
                     },
@@ -210,45 +485,15 @@ async def index():
     return HTMLResponse(html)
 
 
-def _clamp_and_validate(value: float, name: str, lo: float, hi: float) -> float:
-    """Clamp a numeric value to [lo, hi] or raise if it's not a valid number."""
-    if lo <= value <= hi:
-        return value
-    raise HTTPException(400, f"{name} must be between {lo} and {hi}, got {value}")
-
-
+@api_router.post("/train")
 @app.post("/api/train")
-async def start_training(body: dict, tasks: dict = Depends(get_tasks)):
+async def start_training(
+    body: TrainRequest,
+    _auth: None = Depends(require_api_key),
+    tasks: dict = Depends(get_tasks),
+):
     """Start a new distillation task."""
-    try:
-        raw_compression = float(body.get("compression_ratio", 0.05))
-        raw_epochs = int(body.get("epochs", 10))
-        raw_temperature = float(body.get("temperature", 4.0))
-        raw_alpha = float(body.get("alpha", 0.7))
-        raw_patience = int(body.get("patience", 0))
-        raw_batch_size = int(body.get("batch_size", 64))
-    except (ValueError, TypeError) as e:
-        raise HTTPException(400, f"Invalid numeric parameter: {e}")
-
-    config = {
-        "dataset": body.get("dataset", "CIFAR-10"),
-        "teacher": body.get("teacher", "resnet18"),
-        "student": body.get("student", "MiniCNN"),
-        "compression_ratio": _clamp_and_validate(raw_compression, "compression_ratio", 0.01, 1.0),
-        "epochs": _clamp_and_validate(raw_epochs, "epochs", 1, 1000),
-        "temperature": _clamp_and_validate(raw_temperature, "temperature", 0.1, 100.0),
-        "alpha": _clamp_and_validate(raw_alpha, "alpha", 0.0, 1.0),
-        "patience": _clamp_and_validate(raw_patience, "patience", 0, 100),
-        "batch_size": _clamp_and_validate(raw_batch_size, "batch_size", 1, 4096),
-    }
-
-    if config["dataset"] not in ds.DATASETS:
-        raise HTTPException(400, f"Invalid dataset. Choose: {ds.DATASET_CHOICES}")
-    if config["teacher"] not in ds.TEACHER_CHOICES:
-        raise HTTPException(400, f"Invalid teacher. Choose: {ds.TEACHER_CHOICES}")
-    if config["student"] not in ds.STUDENT_CHOICES:
-        raise HTTPException(400, f"Invalid student. Choose: {ds.STUDENT_CHOICES}")
-
+    config = body.model_dump()
     task = TrainingTask(config)
     tasks[task.id] = task
     task.start()
@@ -256,9 +501,24 @@ async def start_training(body: dict, tasks: dict = Depends(get_tasks)):
     return {"task_id": task.id}
 
 
+@api_router.get("/train/{task_id}/stream")
 @app.get("/api/train/{task_id}/stream")
-async def stream_progress(task_id: str, tasks: dict = Depends(get_tasks)):
+async def stream_progress(
+    task_id: str,
+    request: Request,
+    tasks: dict = Depends(get_tasks),
+):
     """SSE endpoint for real-time training progress."""
+    # Authenticate via header (preferred) or query-parameter fallback.
+    # ``EventSource`` in browsers cannot set custom headers, so the frontend
+    # passes the API key as ``?api_key=...`` when auth is enabled.
+    if settings.api_key:
+        key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
+        if not key:
+            raise HTTPException(401, detail="Missing X-API-Key header or ?api_key query parameter.")
+        if key != settings.api_key:
+            raise HTTPException(403, detail="Invalid API key.")
+
     task = tasks.get(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
@@ -327,8 +587,13 @@ async def stream_progress(task_id: str, tasks: dict = Depends(get_tasks)):
     )
 
 
+@api_router.get("/train/{task_id}")
 @app.get("/api/train/{task_id}")
-async def get_task(task_id: str, tasks: dict = Depends(get_tasks)):
+async def get_task(
+    task_id: str,
+    _auth: None = Depends(require_api_key),
+    tasks: dict = Depends(get_tasks),
+):
     """Get the current state of a task."""
     task = tasks.get(task_id)
     if not task:
@@ -345,8 +610,14 @@ async def get_task(task_id: str, tasks: dict = Depends(get_tasks)):
     }
 
 
+@api_router.post("/export/{task_id}")
 @app.post("/api/export/{task_id}")
-async def export_model(task_id: str, body: dict, tasks: dict = Depends(get_tasks)):
+async def export_model(
+    task_id: str,
+    body: ExportRequest,
+    _auth: None = Depends(require_api_key),
+    tasks: dict = Depends(get_tasks),
+):
     """Export the trained student model."""
     task = tasks.get(task_id)
     if not task or task.status != "completed":
@@ -354,7 +625,7 @@ async def export_model(task_id: str, body: dict, tasks: dict = Depends(get_tasks
     if task.student is None:
         raise HTTPException(400, "Student model not available")
 
-    fmt = body.get("format", "onnx")
+    fmt = body.format
     os.makedirs("checkpoints", exist_ok=True)
 
     # Unique filename with dataset + model info
@@ -372,7 +643,7 @@ async def export_model(task_id: str, body: dict, tasks: dict = Depends(get_tasks
                 # ONNX export failed — degrade gracefully to TorchScript
                 self_emit = getattr(task, "_emit", None)
                 if self_emit:
-                    self_emit(f"⚠️ ONNX export failed ({e}), falling back to TorchScript.")
+                    self_emit(f"\u26a0\ufe0f ONNX export failed ({e}), falling back to TorchScript.")
                 fallback = filepath.replace(".onnx", ".pt")
                 export_to_torchscript(task.student, fallback)
                 filename = filename.replace(".onnx", ".pt")
@@ -387,9 +658,15 @@ async def export_model(task_id: str, body: dict, tasks: dict = Depends(get_tasks
         raise HTTPException(500, f"Export failed: {e}")
 
 
+@api_router.get("/config")
 @app.get("/api/config")
 async def get_config():
-    """Return app configuration (teachers list, device, cache status)."""
+    """Return app configuration (teachers list, device, cache status).
+
+    Responses include a ``Cache-Control`` header so that reverse proxies
+    and browsers can cache the result for up to 10 seconds, reducing
+    repeated filesystem scans of the torch hub cache directory.
+    """
     # Check torch hub cache for each teacher model
     cache_dir = os.path.expanduser("~/.cache/torch/hub/checkpoints")
     cached_models: dict[str, bool] = {}
@@ -402,17 +679,25 @@ async def get_config():
         for model in ds.TEACHER_CHOICES:
             cached_models[model] = False
 
-    return {
+    body = {
+        "api_version": "1.0",
         "datasets": ds.DATASET_CHOICES,
         "teachers": ds.TEACHER_CHOICES,
         "students": ds.STUDENT_CHOICES,
         "device": settings.device,
         "cached_teachers": cached_models,
+        "auth_required": bool(settings.api_key),
     }
+    return JSONResponse(body, headers={"Cache-Control": "max-age=10"})
 
 
+@api_router.post("/train/{task_id}/cancel")
 @app.post("/api/train/{task_id}/cancel")
-async def cancel_training(task_id: str, tasks: dict = Depends(get_tasks)):
+async def cancel_training(
+    task_id: str,
+    _auth: None = Depends(require_api_key),
+    tasks: dict = Depends(get_tasks),
+):
     """Cancel a running training task."""
     task = tasks.get(task_id)
     if not task:
@@ -423,14 +708,24 @@ async def cancel_training(task_id: str, tasks: dict = Depends(get_tasks)):
     return {"status": "cancelled"}
 
 
+@api_router.get("/history")
 @app.get("/api/history")
-async def get_history(history_store: list = Depends(get_history_store)):
-    """Return all completed training runs."""
-    return history_store
+async def get_history(
+    _auth: None = Depends(require_api_key),
+    history_store: list = Depends(get_history_store),
+    limit: int = Query(default=50, ge=1, le=1000, description="Max items to return"),
+    offset: int = Query(default=0, ge=0, description="Number of items to skip"),
+):
+    """Return completed training runs with pagination."""
+    return JSONResponse(history_store[offset:][:limit], headers={"Cache-Control": "max-age=5"})
 
 
+@api_router.get("/download/{filename}")
 @app.get("/api/download/{filename}")
-async def download_file(filename: str):
+async def download_file(
+    filename: str,
+    _auth: None = Depends(require_api_key),
+):
     """Download an exported model file."""
     from fastapi.responses import FileResponse
 
@@ -441,14 +736,23 @@ async def download_file(filename: str):
         safe_path,
         media_type="application/octet-stream",
         filename=filename,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, max-age=3600",
+        },
     )
 
 
+@api_router.get("/tasks")
 @app.get("/api/tasks")
-async def list_tasks(tasks: dict = Depends(get_tasks)):
-    """List all training tasks."""
-    return [
+async def list_tasks(
+    _auth: None = Depends(require_api_key),
+    tasks: dict = Depends(get_tasks),
+    limit: int = Query(default=50, ge=1, le=1000, description="Max items to return"),
+    offset: int = Query(default=0, ge=0, description="Number of items to skip"),
+):
+    """List training tasks with pagination."""
+    all_tasks = [
         {
             "id": t.id,
             "status": t.status,
@@ -461,6 +765,31 @@ async def list_tasks(tasks: dict = Depends(get_tasks)):
         }
         for t in tasks.values()
     ]
+    return JSONResponse(all_tasks[offset:][:limit], headers={"Cache-Control": "max-age=3"})
+
+
+# Register the versioned router (under /api/v1).
+app.include_router(api_router)
+
+
+def _start_redirect_server(redirect_port: int, target_port: int) -> None:
+    """Start a minimal HTTP server that redirects all traffic to HTTPS."""
+    import http.server
+    import threading
+
+    class RedirectHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(301)
+            self.send_header("Location", f"https://{self.headers.get('Host', 'localhost').split(':')[0]}:{target_port}{self.path}")
+            self.end_headers()
+
+        def log_message(self, fmt: str, *args: Any) -> None:
+            logger.debug(f"HTTP→HTTPS redirect: {fmt % args}")
+
+    server = http.server.HTTPServer(("0.0.0.0", redirect_port), RedirectHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    logger.info(f"   → http://0.0.0.0:{redirect_port} redirecting to https://...:{target_port}")
 
 
 def launch(port: int | None = None, host: str | None = None, api_only: bool = False) -> None:
@@ -470,6 +799,10 @@ def launch(port: int | None = None, host: str | None = None, api_only: bool = Fa
         port: Server port (default: ``settings.port``).
         host: Bind address (default: ``settings.host``).
         api_only: If True, only expose the REST API (no frontend).
+
+    If ``settings.ssl_certfile`` and ``settings.ssl_keyfile`` are set, the
+    server serves HTTPS.  An automatic HTTP→HTTPS redirect server is started
+    on port 80 (or ``settings.port + 1`` if port 80 is unavailable).
     """
     host = host or settings.host
     port = port or settings.port
@@ -478,11 +811,31 @@ def launch(port: int | None = None, host: str | None = None, api_only: bool = Fa
     if api_only:
         settings.api_only = True
 
+    is_https = bool(settings.ssl_certfile and settings.ssl_keyfile)
+    scheme = "https" if is_https else "http"
     mode = "API-only" if settings.api_only else "Web GUI"
     logger.info(f"⚡ DistilKit {mode}")
-    logger.info(f"   → http://{host}:{port}")
+    logger.info(f"   → {scheme}://{host}:{port}")
+
+    if is_https:
+        # Auto-enable HSTS when TLS is active.
+        if settings.hsts_max_age == 0:
+            settings.hsts_max_age = 31536000
+        # Start HTTP→HTTPS redirect on port 80 (or port+1 if 80 conflicts).
+        try:
+            _start_redirect_server(80, port)
+        except OSError:
+            _start_redirect_server(port + 1, port)
+
     logger.info("   → Press Ctrl+C to stop\n")
-    uvicorn.run(app, host=host, port=port, log_level="warning")
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level="warning",
+        ssl_certfile=settings.ssl_certfile or None,
+        ssl_keyfile=settings.ssl_keyfile or None,
+    )
 
 
 if __name__ == "__main__":

@@ -63,6 +63,32 @@ class Settings:
     # Log level: DEBUG, INFO, WARNING, ERROR
     log_level: str = "INFO"
 
+    # ── Security ──────────────────────────────────────────────────
+    # API key for protecting endpoints. Empty = no auth (local mode).
+    # Set via the API_KEY environment variable.
+    api_key: str = ""
+    # CORS allowed origins. Comma-separated list or "*" for all.
+    # Set via the CORS_ORIGINS environment variable.
+    cors_origins: str = "*"
+    # Rate limit: max requests per minute per IP. 0 = disabled.
+    # Set via the RATE_LIMIT_PER_MINUTE environment variable.
+    rate_limit_per_minute: int = 30
+    # HSTS max-age in seconds (set >0 to enable). Only meaningful behind HTTPS.
+    # Set via the HSTS_MAX_AGE environment variable.
+    hsts_max_age: int = 0
+    # Path to SSL certificate file for HTTPS. Empty = no TLS.
+    # Set via the SSL_CERTFILE environment variable.
+    ssl_certfile: str = ""
+    # Path to SSL private key file for HTTPS.
+    # Set via the SSL_KEYFILE environment variable.
+    ssl_keyfile: str = ""
+
+    # ── Monitoring ────────────────────────────────────────────────
+    # Webhook URL for alert notifications (Slack, Discord, etc.).
+    # Empty = alerts are logged only.
+    # Set via the ALERT_WEBHOOK_URL environment variable.
+    alert_webhook_url: str = ""
+
     @classmethod
     def from_env(cls) -> "Settings":
         """Build a ``Settings`` instance from the current environment."""
@@ -76,6 +102,13 @@ class Settings:
             checkpoints_dir=os.environ.get("CHECKPOINTS_DIR", "checkpoints"),
             max_log_size=int(os.environ.get("MAX_LOG_SIZE", "100000")),
             log_level=os.environ.get("LOG_LEVEL", "INFO"),
+            api_key=os.environ.get("API_KEY", ""),
+            cors_origins=os.environ.get("CORS_ORIGINS", "*"),
+            rate_limit_per_minute=int(os.environ.get("RATE_LIMIT_PER_MINUTE", "30")),
+            hsts_max_age=int(os.environ.get("HSTS_MAX_AGE", "0")),
+            ssl_certfile=os.environ.get("SSL_CERTFILE", ""),
+            ssl_keyfile=os.environ.get("SSL_KEYFILE", ""),
+            alert_webhook_url=os.environ.get("ALERT_WEBHOOK_URL", ""),
         )
 
 

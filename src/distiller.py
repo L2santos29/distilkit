@@ -23,12 +23,6 @@ class DistillationLoss(nn.Module):
     """Combined distillation loss: KL divergence + cross-entropy."""
 
     def __init__(self, temperature: float = 4.0, alpha: float = 0.7):
-        """Initialize distillation loss.
-
-        Args:
-            temperature: Softening factor. Higher = softer distributions.
-            alpha: Weight for distillation loss. (1-alpha) for hard-label loss.
-        """
         super().__init__()
         self.temperature = temperature
         self.alpha = alpha
@@ -40,16 +34,7 @@ class DistillationLoss(nn.Module):
         teacher_logits: torch.Tensor,
         labels: torch.Tensor,
     ) -> torch.Tensor:
-        """Compute combined distillation loss.
-
-        Args:
-            student_logits: Raw logits from student model.
-            teacher_logits: Raw logits from teacher model.
-            labels: Ground truth class labels.
-
-        Returns:
-            Scalar loss value.
-        """
+        """α · KL(soft_student ‖ soft_teacher) · T² + (1 − α) · CE(student, labels)."""
         # Distillation loss (KL divergence between softened distributions)
         soft_student = F.log_softmax(student_logits / self.temperature, dim=1)
         soft_teacher = F.softmax(teacher_logits / self.temperature, dim=1)
@@ -73,15 +58,7 @@ class Distiller:
         alpha: float = 0.7,
         device: str = "cpu",
     ):
-        """Initialize distiller.
-
-        Args:
-            teacher: Pre-trained teacher model (frozen).
-            student: Student model to be trained.
-            temperature: Softening factor for logits.
-            alpha: Distillation loss weight.
-            device: Training device.
-        """
+        """Freezes *teacher*, keeps *student* trainable, sets up the loss."""
         self.device = device
         self.teacher = teacher.to(device).eval()
         self.student = student.to(device)

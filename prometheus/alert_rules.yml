@@ -1,0 +1,108 @@
+# DistilKit — Prometheus Alert Rules
+#
+# These rules assume the DistilKit /metrics endpoint is being scraped.
+# Adjust thresholds and durations to match your production SLOs.
+#
+# Load this file in your Prometheus config:
+#
+#   rule_files:
+#     - /etc/prometheus/alert_rules.yml
+# ============================================================================
+
+groups:
+  - name: distilkit
+    interval: 30s
+    rules:
+
+      # ── Availability ─────────────────────────────────────────────────────
+      - alert: DistilKitDown
+        expr: up{job="distilkit"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "DistilKit instance {{ $labels.instance }} is down"
+          description: >
+            The DistilKit server at {{ $labels.instance }} has been unreachable
+            for more than 1 minute.
+
+      - alert: DistilKitHealthCheckFailing
+        expr: probe_success{job="distilkit"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "DistilKit health check failing"
+          description: >
+            The /health endpoint on {{ $labels.instance }} is returning
+            non-200 status codes.
+
+      # ── Errors ──────────────────────────────────────────────────────────
+      - alert: HighErrorRate
+        expr: rate(distilkit_errors_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High 5xx error rate on {{ $labels.instance }}"
+          description: >
+            The 5xx error rate has been non-zero for the past 2 minutes.
+            Current rate: {{ $value | humanize }} errors/sec.
+
+      - alert: SustainedErrorRate
+        expr: rate(distilkit_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sustained high error rate on {{ $labels.instance }}"
+          description: >
+            Error rate exceeds 0.1/sec for 5 minutes. Immediate investigation
+            required. Current rate: {{ $value | humanize }} errors/sec.
+
+      # ── Latency ─────────────────────────────────────────────────────────
+      - alert: HighLatency
+        expr: rate(distilkit_request_duration_seconds[5m]) > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High request latency on {{ $labels.instance }}"
+          description: >
+            Cumulative request duration is increasing by more than 30
+            seconds per 5-minute window. Current rate: {{ $value | humanize }}.
+
+      # ── Tasks ───────────────────────────────────────────────────────────
+      - alert: TaskFailureRate
+        expr: distilkit_tasks_total{status="failed"} > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Training tasks failing"
+          description: >
+            {{ $value | humanize }} training tasks are in "failed" status.
+            Check the web UI or task logs for details.
+
+      - alert: NoRecentCompletions
+        expr: time() - max(distilkit_tasks_created_timestamp_seconds) > 86400
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "No recent training activity"
+          description: >
+            No training task has been created in the last 24 hours. This may
+            be normal, but verify the instance is still in use.
+
+      # ── Resources ───────────────────────────────────────────────────────
+      - alert: HighUptimeReset
+        expr: distilkit_uptime_seconds < 60
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DistilKit instance recently restarted"
+          description: >
+            Uptime is only {{ $value | humanize }} seconds. The server
+            was restarted less than 1 minute ago.

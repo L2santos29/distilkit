@@ -23,6 +23,9 @@ DOWNLOAD_CHUNK_SIZE: int = 8192
 # Maximum number of download retries before giving up
 MAX_DOWNLOAD_RETRIES: int = 3
 
+# Log download progress every N chunks (every ~200 × 8KB = ~1.6 MB)
+DOWNLOAD_PROGRESS_INTERVAL: int = 200
+
 # Base delay (seconds) for exponential backoff between retries
 RETRY_BASE_DELAY_SEC: int = 2
 
@@ -229,7 +232,7 @@ def download_cifar10(
                                 break
                             f.write(data)
                             downloaded += len(data)
-                            if downloaded % (chunk * 200) == 0:
+                            if downloaded % (chunk * DOWNLOAD_PROGRESS_INTERVAL) == 0:
                                 logger.info(f"   {min(downloaded/total*100,100):.0f}%")
                     if os.path.getsize(cifar_tgz) == expected_size:
                         downloaded_ok = True

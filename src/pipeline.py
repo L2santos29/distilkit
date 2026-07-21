@@ -13,15 +13,19 @@ import torch.nn as nn
 
 from src import datasets as ds
 from src.benchmarks import compare_teacher_student
+from src.circuit_breaker import CircuitBreaker, CircuitOpenError
 from src.distiller import Distiller
 from src.log_config import logger
 from src.onnx_export import export_to_onnx, export_to_torchscript
 from src.settings import settings
 from src.student import build_student
 from src.teacher import load_teacher
+from src.tracing import tracer
 
-# Default learning rate for distillation training
-LR_DEFAULT: float = 1e-3
+# Circuit breakers for network-dependent pipeline stages.
+# Preventing cascading failures from repeated download errors.
+_dataset_cb = CircuitBreaker(failure_threshold=3, recovery_timeout=60, name="dataset")
+_teacher_cb = CircuitBreaker(failure_threshold=3, recovery_timeout=60, name="teacher")
 
 
 class PipelineError(Exception):
@@ -87,74 +91,99 @@ def run_distillation_pipeline(
     # ------------------------------------------------------------------
     # 1. Data
     # ------------------------------------------------------------------
-    result = ds.get_dataset_loaders(
-        dataset_name,
-        batch_size,
-        data_root,
-        cancel_flag=_cancel,
-        subprocess_tracker=dataset_subprocess_tracker,
-    )
-    if result is None:
-        raise DatasetError(
-            f"Failed to prepare dataset '{dataset_name}'. "
-            f"Check your internet connection and try again, "
-            f"or choose a different dataset (MNIST / FashionMNIST "
-            f"are smaller and faster to download)."
-        )
-    train_loader, val_loader, num_classes, in_channels = result
+    with tracer.start_span("pipeline.dataset") as span:
+        span.set_attribute("dataset", dataset_name)
+        try:
+            result = _dataset_cb.call(
+                ds.get_dataset_loaders,
+                dataset_name,
+                batch_size,
+                data_root,
+                cancel_flag=_cancel,
+                subprocess_tracker=dataset_subprocess_tracker,
+            )
+        except CircuitOpenError:
+            raise DatasetError(
+                f"Dataset downloads are temporarily suspended due to repeated "
+                f"failures.  Wait a moment and try again."
+            )
+        if result is None:
+            raise DatasetError(
+                f"Failed to prepare dataset '{dataset_name}'. "
+                f"Check your internet connection and try again, "
+                f"or choose a different dataset (MNIST / FashionMNIST "
+                f"are smaller and faster to download)."
+            )
+        train_loader, val_loader, num_classes, in_channels = result
+        span.set_attribute("num_classes", num_classes)
 
     # ------------------------------------------------------------------
     # 2. Teacher
     # ------------------------------------------------------------------
-    try:
-        teacher = load_teacher(teacher_name, num_classes=num_classes)
-    except (OSError, RuntimeError) as e:
-        if teacher_fallback_random:
-            _msg(
-                f"   ⚠️ Could not load pretrained weights: {e}. "
-                f"Falling back to random initialization."
-            )
-            teacher = load_teacher(
-                teacher_name, num_classes=num_classes, pretrained=False
-            )
-        else:
+    with tracer.start_span("pipeline.teacher") as span:
+        span.set_attribute("teacher", teacher_name)
+        try:
+            teacher = _teacher_cb.call(load_teacher, teacher_name, num_classes=num_classes)
+        except CircuitOpenError:
             raise TeacherError(
-                f"Failed to load teacher '{teacher_name}': {e}"
-            ) from e
+                f"Teacher model downloads are temporarily suspended due to "
+                f"repeated failures.  Wait a moment and try again."
+            )
+        except (OSError, RuntimeError) as e:
+            if teacher_fallback_random:
+                _msg(
+                    f"   ⚠️ Could not load pretrained weights: {e}. "
+                    f"Falling back to random initialization."
+                )
+                teacher = load_teacher(
+                    teacher_name, num_classes=num_classes, pretrained=False
+                )
+            else:
+                raise TeacherError(
+                    f"Failed to load teacher '{teacher_name}': {e}"
+                ) from e
 
-    teacher.to(device).eval()
-    teacher_params = sum(p.numel() for p in teacher.parameters())
-    _msg(f"   Teacher parameters: {teacher_params:,}")
+        teacher.to(device).eval()
+        teacher_params = sum(p.numel() for p in teacher.parameters())
+        span.set_attribute("teacher_params", teacher_params)
+        _msg(f"   Teacher parameters: {teacher_params:,}")
 
     # ------------------------------------------------------------------
     # 3. Student
     # ------------------------------------------------------------------
-    student = build_student(
-        teacher=teacher,
-        student_type=student_type,
-        compression_ratio=compression_ratio,
-        num_classes=num_classes,
-        in_channels=in_channels,
-    )
-    student.to(device)
-    student_params = sum(p.numel() for p in student.parameters())
-    _msg(f"   Student parameters: {student_params:,}")
-    _msg(f"   Compression ratio: {student_params / teacher_params:.2%}")
+    with tracer.start_span("pipeline.student") as span:
+        student = build_student(
+            teacher=teacher,
+            student_type=student_type,
+            compression_ratio=compression_ratio,
+            num_classes=num_classes,
+            in_channels=in_channels,
+        )
+        student.to(device)
+        student_params = sum(p.numel() for p in student.parameters())
+        span.set_attribute("student_type", student_type)
+        span.set_attribute("student_params", student_params)
+        span.set_attribute("compression_ratio", compression_ratio)
+        _msg(f"   Student parameters: {student_params:,}")
+        _msg(f"   Compression ratio: {student_params / teacher_params:.2%}")
 
-    # Cache the student if a cache dict was provided (webapp uses this)
-    if student_cache is not None:
-        student_cache[teacher_name] = student
+        # Cache the student if a cache dict was provided (webapp uses this)
+        if student_cache is not None:
+            student_cache[teacher_name] = student
 
     # ------------------------------------------------------------------
     # 4. Distiller
     # ------------------------------------------------------------------
-    distiller = Distiller(
-        teacher,
-        student,
-        temperature=temperature,
-        alpha=alpha,
-        device=device,
-    )
+    with tracer.start_span("pipeline.distiller_init") as span:
+        distiller = Distiller(
+            teacher,
+            student,
+            temperature=temperature,
+            alpha=alpha,
+            device=device,
+        )
+        span.set_attribute("temperature", temperature)
+        span.set_attribute("alpha", alpha)
 
     # ------------------------------------------------------------------
     # 5. Optimizer & scheduler
@@ -190,55 +219,68 @@ def run_distillation_pipeline(
             torch.save(ckpt_data, ckpt_path)
             _msg(f"   💾 Checkpoint saved: {ckpt_path}")
 
-    history = distiller.train(
-        train_loader,
-        val_loader,
-        epochs=epochs,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        patience=patience,
-        start_epoch=start_epoch,
-        initial_history=initial_history,
-        ckpt_callback=_save_ckpt,
-        on_epoch_end=on_epoch_end,
-        on_batch_end=on_batch_end,
-        cancel_flag=cancel_flag,
-    )
+    with tracer.start_span("pipeline.train") as span:
+        span.set_attribute("epochs", epochs)
+        span.set_attribute("batch_size", batch_size)
+        span.set_attribute("patience", patience)
+        history = distiller.train(
+            train_loader,
+            val_loader,
+            epochs=epochs,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            patience=patience,
+            start_epoch=start_epoch,
+            initial_history=initial_history,
+            ckpt_callback=_save_ckpt,
+            on_epoch_end=on_epoch_end,
+            on_batch_end=on_batch_end,
+            cancel_flag=cancel_flag,
+        )
+        span.set_attribute("epochs_trained", len(history.get("train_loss", [])))
 
     # ------------------------------------------------------------------
     # 8. Benchmark
     # ------------------------------------------------------------------
     comparison = None
     if benchmark_target and benchmark_target != "none":
-        comparison = compare_teacher_student(
-            teacher, student, target=benchmark_target
-        )
-        _msg(
-            f"   Teacher : {comparison['teacher']['mean_ms']:.2f} ms  "
-            f"({comparison['teacher']['parameters']:,} params)"
-        )
-        _msg(
-            f"   Student : {comparison['student']['mean_ms']:.2f} ms  "
-            f"({comparison['student']['parameters']:,} params)"
-        )
-        _msg(f"   Speedup : {comparison['speedup']}x")
-        _msg(f"   Size    : {comparison['compression']:.2%} of teacher")
+        with tracer.start_span("pipeline.benchmark") as span:
+            span.set_attribute("target", benchmark_target)
+            comparison = compare_teacher_student(
+                teacher, student, target=benchmark_target
+            )
+            if comparison:
+                span.set_attribute("speedup", comparison.get("speedup", 0))
+                span.set_attribute("compression", comparison.get("compression", 0))
+            _msg(
+                f"   Teacher : {comparison['teacher']['mean_ms']:.2f} ms  "
+                f"({comparison['teacher']['parameters']:,} params)"
+            )
+            _msg(
+                f"   Student : {comparison['student']['mean_ms']:.2f} ms  "
+                f"({comparison['student']['parameters']:,} params)"
+            )
+            _msg(f"   Speedup : {comparison['speedup']}x")
+            _msg(f"   Size    : {comparison['compression']:.2%} of teacher")
 
     # ------------------------------------------------------------------
     # 9. Export
     # ------------------------------------------------------------------
     exported_path = None
     if export_format and export_format != "none":
-        Path(export_output_dir).mkdir(parents=True, exist_ok=True)
-        if export_format == "onnx":
-            exported_path = export_to_onnx(
-                student, f"{export_output_dir}/student.onnx"
-            )
-        else:
-            exported_path = export_to_torchscript(
-                student, f"{export_output_dir}/student.pt"
-            )
-        _msg(f"   Exported to: {exported_path}")
+        with tracer.start_span("pipeline.export") as span:
+            Path(export_output_dir).mkdir(parents=True, exist_ok=True)
+            span.set_attribute("format", export_format)
+            if export_format == "onnx":
+                exported_path = export_to_onnx(
+                    student, f"{export_output_dir}/student.onnx"
+                )
+            else:
+                exported_path = export_to_torchscript(
+                    student, f"{export_output_dir}/student.pt"
+                )
+            span.set_attribute("path", str(exported_path))
+            _msg(f"   Exported to: {exported_path}")
 
     return {
         "teacher": teacher,

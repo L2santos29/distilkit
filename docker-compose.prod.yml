@@ -1,0 +1,56 @@
+# DistilKit — Production Deployment
+#
+# Production-grade settings: health checks, restart policy, restricted
+# CORS, authentication, rate limiting, and persistent volumes.
+#
+# Prerequisites:
+#   1. Build the production image:
+#        docker build -t distilkit:0.1.0 .
+#        docker tag distilkit:0.1.0 distilkit:latest
+#
+#   2. Set required environment variables in a .env file or shell:
+#        export PROD_API_KEY="your-secure-key-here"
+#        export PROD_CORS_ORIGINS="https://app.example.com"
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+# ============================================================================
+
+services:
+  distilkit:
+    image: distilkit:latest
+    container_name: distilkit-prod
+    ports:
+      - "${PROD_PORT:-7860}:7860"
+    environment:
+      # ── Core ──────────────────────────────────────────────────────
+      - DEVICE=cpu
+      - HOST=0.0.0.0
+      - PORT=7860
+      - API_ONLY=false
+      - RUNS_DIR=/app/runs
+      - DATA_DIR=/app/data
+      - CHECKPOINTS_DIR=/app/checkpoints
+      - LOG_LEVEL=INFO
+      # ── Security (MUST be set via .env or shell) ──────────────────
+      - API_KEY=${PROD_API_KEY:?Set PROD_API_KEY in .env}
+      - CORS_ORIGINS=${PROD_CORS_ORIGINS:?Set PROD_CORS_ORIGINS in .env}
+      - RATE_LIMIT_PER_MINUTE=120
+      - HSTS_MAX_AGE=31536000
+    volumes:
+      - distilkit_prod_data:/app/data
+      - distilkit_prod_ckpt:/app/checkpoints
+      - distilkit_prod_runs:/app/runs
+    command: python -m src.webapp
+    restart: unless-stopped
+    healthcheck:
+      test: curl -sf http://localhost:7860/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  distilkit_prod_data:
+  distilkit_prod_ckpt:
+  distilkit_prod_runs:

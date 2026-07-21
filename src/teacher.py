@@ -7,21 +7,28 @@ in the distillation pipeline.
 import torch.nn as nn
 from torchvision import models
 
+# In-memory cache: loaded teacher models are reused across training runs.
+# The key is ``{model_name}__{num_classes}__{pretrained}``.
+_teacher_cache: dict[str, nn.Module] = {}
+
+
+def _cache_key(model_name: str, num_classes: int, pretrained: bool) -> str:
+    return f"{model_name}__{num_classes}__{pretrained}"
+
 
 def load_teacher(model_name: str, num_classes: int = 10, pretrained: bool = True) -> nn.Module:
-    """Load a pre-trained model to serve as a teacher.
+    """Load a torchvision model with a ``num_classes`` classifier head.
 
-    Args:
-        model_name: Model architecture (e.g., 'resnet50', 'resnet18',
-                    'mobilenet_v3_large', 'efficientnet_b0').
-        num_classes: Number of output classes.
-        pretrained: Whether to load pre-trained weights.
+    Teachers are cached in memory once loaded so that repeated requests
+    for the same architecture do not re-download weights or re-instantiate
+    the model object.
 
-    Returns:
-        Loaded teacher model.
+    ResNet/EfficientNet models get their ``fc`` layer replaced when
+    ``num_classes`` differs from the default; MobileNets accept the
+    parameter directly.
 
     Raises:
-        ValueError: If model_name is not supported.
+        ValueError: If *model_name* is not in the supported registry.
     """
     model_registry = {
         "resnet18": models.resnet18,
@@ -37,6 +44,11 @@ def load_teacher(model_name: str, num_classes: int = 10, pretrained: bool = True
     if model_name not in model_registry:
         raise ValueError(f"Unknown model: {model_name}. Available: {list(model_registry.keys())}")
 
+    key = _cache_key(model_name, num_classes, pretrained)
+    cached = _teacher_cache.get(key)
+    if cached is not None:
+        return cached
+
     model_fn = model_registry[model_name]
 
     # Handle models that need explicit num_classes (ResNet) vs. those that don't (MobileNet)
@@ -49,4 +61,5 @@ def load_teacher(model_name: str, num_classes: int = 10, pretrained: bool = True
         weights = "DEFAULT" if pretrained else None
         model = model_fn(weights=weights, num_classes=num_classes)
 
+    _teacher_cache[key] = model
     return model

@@ -1,0 +1,238 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "title": "DistilKit",
+  "description": "Health dashboard for DistilKit — request rate, error rate, task status, and uptime.",
+  "tags": ["distilkit", "ml", "monitoring"],
+  "schemaVersion": 38,
+  "version": 1,
+  "panels": [
+    {
+      "title": "Uptime",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "distilkit_uptime_seconds",
+          "legendFormat": "uptime",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "none"},
+          "thresholds": {"mode": "absolute", "steps": [{"value": null, "color": "green"}]}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "uptime"},
+            "properties": [{"id": "unit", "value": "dtdurations"}]
+          }
+        ]
+      },
+      "description": "Time since the DistilKit instance last started."
+    },
+    {
+      "title": "Request Rate",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+      "targets": [
+        {
+          "expr": "rate(distilkit_requests_total[5m])",
+          "legendFormat": "req/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {"mode": "none"},
+          "thresholds": {"mode": "absolute", "steps": [{"value": null, "color": "blue"}]}
+        }
+      },
+      "description": "Average HTTP requests per second over the last 5 minutes."
+    },
+    {
+      "title": "Error Rate (5xx)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+      "targets": [
+        {
+          "expr": "rate(distilkit_errors_total[5m])",
+          "legendFormat": "errors/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": null, "color": "green"},
+              {"value": 0.01, "color": "orange"},
+              {"value": 0.1, "color": "red"}
+            ]
+          }
+        }
+      },
+      "description": "5xx error rate per second. Non-zero for extended periods indicates a problem."
+    },
+    {
+      "title": "Total Requests",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "distilkit_requests_total",
+          "legendFormat": "total"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "none"}
+        }
+      },
+      "description": "Cumulative HTTP requests processed since the instance started."
+    },
+    {
+      "title": "Training Tasks by Status",
+      "type": "piechart",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 4},
+      "targets": [
+        {"expr": "distilkit_tasks_total{status=\"running\"}", "legendFormat": "Running"},
+        {"expr": "distilkit_tasks_total{status=\"completed\"}", "legendFormat": "Completed"},
+        {"expr": "distilkit_tasks_total{status=\"failed\"}", "legendFormat": "Failed"},
+        {"expr": "distilkit_tasks_total{status=\"cancelled\"}", "legendFormat": "Cancelled"},
+        {"expr": "distilkit_tasks_total{status=\"pending\"}", "legendFormat": "Pending"}
+      ],
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}}
+      },
+      "options": {
+        "displayLabels": ["name", "percent"],
+        "legend": {"displayMode": "table", "placement": "right"}
+      },
+      "description": "Current distribution of training tasks by status."
+    },
+    {
+      "title": "Active Tasks",
+      "type": "gauge",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 4},
+      "targets": [
+        {"expr": "distilkit_tasks_total{status=\"running\"}", "legendFormat": "active"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 10,
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": null, "color": "green"},
+              {"value": 3, "color": "orange"},
+              {"value": 6, "color": "red"}
+            ]
+          }
+        }
+      },
+      "description": "Number of training tasks currently running."
+    },
+    {
+      "title": "Requests by Path",
+      "type": "barchart",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 12},
+      "targets": [
+        {"expr": "topk(10, distilkit_requests_per_path)", "legendFormat": "{{path}}"}
+      ],
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}}
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto"
+      },
+      "description": "Top 10 most requested API paths."
+    },
+    {
+      "title": "Failed Tasks Over Time",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 12},
+      "targets": [
+        {"expr": "distilkit_tasks_total{status=\"failed\"}", "legendFormat": "Failed tasks"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"lineInterpolation": "stepAfter", "showPoints": "always"}
+        }
+      },
+      "options": {"legend": {"displayMode": "hidden"}},
+      "description": "Number of failed training tasks. Persistent non-zero indicates recurring issues."
+    },
+    {
+      "title": "Instance Info",
+      "type": "table",
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 20},
+      "targets": [
+        {
+          "expr": "distilkit_uptime_seconds",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "Uptime"
+        },
+        {
+          "expr": "distilkit_requests_total",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "Total Requests"
+        },
+        {
+          "expr": "distilkit_errors_total",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "Total Errors"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"align": "auto"}
+        }
+      },
+      "options": {
+        "showHeader": true
+      },
+      "description": "Aggregate instance stats at a glance."
+    }
+  ],
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "type": "query",
+        "query": "label_values(up{job=\"distilkit\"}, instance)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "sort": 1,
+        "datasource": "Prometheus"
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "datasource": "Prometheus",
+        "enable": true,
+        "name": "Restarts",
+        "query": "changes(distilkit_uptime_seconds[1m]) > 0",
+        "showIn": 0,
+        "titleFormat": "Restart detected",
+        "textFormat": "Uptime reset — instance was restarted"
+      }
+    ]
+  }
+}

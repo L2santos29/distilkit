@@ -108,9 +108,6 @@ def _new_id() -> str:
     return uuid.uuid4().hex
 
 
-def _traceparent_from_env() -> str | None:
-    """Read ``TRACEPARENT`` environment variable for legacy compatibility."""
-    return os.environ.get("TRACEPARENT")
 
 
 class Tracer:

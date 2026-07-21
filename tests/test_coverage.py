@@ -2029,20 +2029,4 @@ class TestTracingCoverage:
         assert "abc123def4567890ffff0000aaaabbbb" in span.trace_id
         assert span.span_id is not None
 
-    def test_traceparent_from_env_default(self) -> None:
-        """_traceparent_from_env returns None when TRACEPARENT is not set."""
-        from src.tracing import _traceparent_from_env
-        # Unset to ensure clean state
-        import os
-        os.environ.pop("TRACEPARENT", None)
-        assert _traceparent_from_env() is None
 
-    def test_traceparent_from_env_set(self) -> None:
-        """_traceparent_from_env returns the env var value when set."""
-        from src.tracing import _traceparent_from_env
-        import os
-        os.environ["TRACEPARENT"] = "00-test-01"
-        try:
-            assert _traceparent_from_env() == "00-test-01"
-        finally:
-            os.environ.pop("TRACEPARENT", None)

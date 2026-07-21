@@ -31,7 +31,6 @@ from src.log_config import logger, set_request_id
 from src.onnx_export import export_to_onnx, export_to_torchscript
 from src.settings import settings
 from src.task_manager import TrainingTask, _history, _save_run, _tasks, get_history_store, get_tasks
-from src.settings import settings
 from src.tracing import tracer, current_span
 
 

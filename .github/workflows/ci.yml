@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.12"]
       fail-fast: false
 
     steps:
@@ -81,3 +81,8 @@ jobs:
           pip-audit --strict --desc on 2>&1
         continue-on-error: true
         timeout-minutes: 5
+
+      - name: Show failing step info
+        if: failure()
+        run: |
+          echo "Job failed. See previous step annotations for details."

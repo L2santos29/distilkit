@@ -26,7 +26,6 @@ from src.webapp_middleware import (
 )
 from src.webapp_routes import api_router, legacy_router
 
-
 # ---------------------------------------------------------------------------
 # Lifespan — clean up background tasks on shutdown
 # ---------------------------------------------------------------------------
@@ -90,9 +89,7 @@ app.include_router(legacy_router)
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(
-    request: Request, exc: RequestValidationError
-):
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Return Pydantic validation errors as HTTP 400 instead of the default 422."""
     messages: list[str] = []
     for err in exc.errors():
@@ -110,6 +107,7 @@ from typing import Any  # noqa: E402
 
 def _start_redirect_server(redirect_port: int, target_port: int) -> None:
     """Start a minimal HTTP server that redirects all traffic to HTTPS."""
+
     class RedirectHandler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             self.send_response(301)
@@ -125,7 +123,9 @@ def _start_redirect_server(redirect_port: int, target_port: int) -> None:
     server = http.server.HTTPServer(("0.0.0.0", redirect_port), RedirectHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    logger.info(f"   \u2192 http://0.0.0.0:{redirect_port} redirecting to https://...:{target_port}")
+    logger.info(
+        f"   \u2192 http://0.0.0.0:{redirect_port} redirecting to https://...:{target_port}"
+    )
 
 
 # ---------------------------------------------------------------------------

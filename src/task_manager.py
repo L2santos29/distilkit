@@ -20,7 +20,6 @@ from src.log_config import logger
 from src.pipeline import DatasetError, PipelineError, run_distillation_pipeline
 from src.settings import settings
 
-
 # ---------------------------------------------------------------------------
 # History persistence
 # ---------------------------------------------------------------------------
@@ -136,7 +135,7 @@ class TrainingTask:
         self._log_buffer.seek(0)
         # Trim oldest logs if over the limit
         if len(self.logs) > settings.max_log_size:
-            self.logs = self.logs[-settings.max_log_size:]
+            self.logs = self.logs[-settings.max_log_size :]
 
     # ── Result helpers ────────────────────────────────────────────
 

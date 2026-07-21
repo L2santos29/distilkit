@@ -9,7 +9,7 @@ Each section targets specific uncovered lines reported by ``pytest --cov``.
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, patch
 
 import pytest
 import torch
@@ -155,6 +155,7 @@ class TestCLICoverage:
     def test_cmd_train_pipeline_error_raises_sys_exit(self):
         """cmd_train exits when PipelineError is raised."""
         import argparse
+
         from src.cli import cmd_train
 
         with patch("src.cli.run_distillation_pipeline") as mock_pipeline:
@@ -183,6 +184,7 @@ class TestCLICoverage:
     def test_cmd_train_result_returns_student(self):
         """cmd_train returns the student model on success."""
         import argparse
+
         from src.cli import cmd_train
 
         student = nn.Linear(10, 2)
@@ -210,6 +212,7 @@ class TestCLICoverage:
     def test_benchmark_missing_pth_logs_error(self):
         """cmd_benchmark with missing .pth logs error and returns."""
         import argparse
+
         from src.cli import cmd_benchmark
 
         args = argparse.Namespace(
@@ -224,6 +227,7 @@ class TestCLICoverage:
         """cmd_benchmark with raw state dict (no 'state_dict' key)."""
         import argparse
         import tempfile
+
         from src.cli import cmd_benchmark
 
         # Save a full model object (not a state dict) to trigger the else branch
@@ -249,9 +253,12 @@ class TestCLICoverage:
         """cmd_benchmark handles checkpoint dict with 'state_dict' key."""
         import argparse
         import tempfile
+
         from src.cli import cmd_benchmark
 
-        state = {"state_dict": {"fc.weight": torch.randn(10, 32 * 32 * 3), "fc.bias": torch.randn(10)}}
+        state = {
+            "state_dict": {"fc.weight": torch.randn(10, 32 * 32 * 3), "fc.bias": torch.randn(10)}
+        }
 
         with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
             torch.save(state, f.name)
@@ -271,6 +278,7 @@ class TestCLICoverage:
     def test_cmd_export_missing_file_logs_error(self):
         """cmd_export with missing file logs error and returns."""
         import argparse
+
         from src.cli import cmd_export
 
         args = argparse.Namespace(
@@ -286,23 +294,39 @@ class TestCLICoverage:
         from src.cli import build_parser
 
         parser = build_parser()
-        args = parser.parse_args([
-            "train",
-            "--dataset", "MNIST",
-            "--teacher", "resnet50",
-            "--epochs", "5",
-            "--temperature", "3.0",
-            "--alpha", "0.5",
-            "--batch-size", "32",
-            "--patience", "2",
-            "--compression-ratio", "0.1",
-            "--ckpt-every", "3",
-            "--resume", "ckpt.pt",
-            "--export", "onnx",
-            "--benchmark", "cpu",
-            "--output-dir", "/tmp/out",
-            "--data-dir", "/tmp/data",
-        ])
+        args = parser.parse_args(
+            [
+                "train",
+                "--dataset",
+                "MNIST",
+                "--teacher",
+                "resnet50",
+                "--epochs",
+                "5",
+                "--temperature",
+                "3.0",
+                "--alpha",
+                "0.5",
+                "--batch-size",
+                "32",
+                "--patience",
+                "2",
+                "--compression-ratio",
+                "0.1",
+                "--ckpt-every",
+                "3",
+                "--resume",
+                "ckpt.pt",
+                "--export",
+                "onnx",
+                "--benchmark",
+                "cpu",
+                "--output-dir",
+                "/tmp/out",
+                "--data-dir",
+                "/tmp/data",
+            ]
+        )
         assert args.dataset == "MNIST"
         assert args.teacher == "resnet50"
         assert args.epochs == 5
@@ -321,6 +345,7 @@ class TestCLICoverage:
     def test_main_dispatch_train(self):
         """main() dispatch calls cmd_train for 'train' command."""
         import sys
+
         from src.cli import main
 
         with patch.object(sys, "argv", ["distilkit", "train", "--epochs", "1"]):
@@ -333,6 +358,7 @@ class TestCLICoverage:
     def test_main_dispatch_export(self):
         """main() dispatch calls cmd_export for 'export' command."""
         import sys
+
         from src.cli import main
 
         with patch.object(sys, "argv", ["distilkit", "export", "--model", "x.pth"]):
@@ -343,6 +369,7 @@ class TestCLICoverage:
     def test_main_dispatch_benchmark(self):
         """main() dispatch calls cmd_benchmark for 'benchmark' command."""
         import sys
+
         from src.cli import main
 
         with patch.object(sys, "argv", ["distilkit", "benchmark", "--model", "x.onnx"]):
@@ -353,6 +380,7 @@ class TestCLICoverage:
     def test_main_dispatch_no_command(self):
         """main() with no command prints help and exits."""
         import sys
+
         from src.cli import main
 
         with patch.object(sys, "argv", ["distilkit"]):
@@ -363,9 +391,10 @@ class TestCLICoverage:
         """cmd_benchmark with a real .onnx file works."""
         import argparse
         import tempfile
+
         from src.cli import cmd_benchmark
-        from src.student import MiniCNN
         from src.onnx_export import export_to_onnx
+        from src.student import MiniCNN
 
         model = MiniCNN(in_channels=3, num_classes=10, width=0.5)
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -382,6 +411,7 @@ class TestCLICoverage:
         """cmd_export successfully exports a model to onnx."""
         import argparse
         import tempfile
+
         from src.cli import cmd_export
         from src.student import MiniCNN
 
@@ -404,6 +434,7 @@ class TestCLICoverage:
         """cmd_export successfully exports a model to torchscript."""
         import argparse
         import tempfile
+
         from src.cli import cmd_export
         from src.student import MiniCNN
 
@@ -425,6 +456,7 @@ class TestCLICoverage:
     def test_main_import_error(self):
         """main() with gui command handles ImportError gracefully."""
         import sys
+
         from src.cli import main
 
         with patch.object(sys, "argv", ["distilkit", "gui"]):
@@ -437,6 +469,7 @@ class TestCLICoverage:
     def test_main_unknown_command(self):
         """main() with unknown command prints help and exits."""
         import sys
+
         from src.cli import main
 
         with patch.object(sys, "argv", ["distilkit", "unknown_cmd"]):
@@ -446,6 +479,7 @@ class TestCLICoverage:
     def test_main_no_args_prints_help(self):
         """main() with no args prints help and exits."""
         import sys
+
         from src.cli import main
 
         with patch.object(sys, "argv", ["distilkit"]):
@@ -456,6 +490,7 @@ class TestCLICoverage:
         """cmd_export loads a checkpoint dict with state_dict key."""
         import argparse
         import tempfile
+
         from src.cli import cmd_export
         from src.student import MiniCNN
 
@@ -482,6 +517,7 @@ class TestBenchmarkCoverage:
         """cmd_benchmark with a state-dict checkpoint covers logging lines."""
         import argparse
         import tempfile
+
         from src.cli import cmd_benchmark
         from src.student import MiniCNN
 
@@ -504,9 +540,7 @@ class TestBenchmarkCoverage:
 
         teacher = nn.Sequential(nn.Flatten(), nn.Linear(32 * 32 * 3, 10), nn.LogSoftmax(dim=1))
         student = nn.Sequential(nn.Flatten(), nn.Linear(32 * 32 * 3, 10), nn.LogSoftmax(dim=1))
-        result = compare_teacher_student(
-            teacher, student, input_shape=(1, 3, 32, 32)
-        )
+        result = compare_teacher_student(teacher, student, input_shape=(1, 3, 32, 32))
         assert "teacher" in result
         assert "student" in result
         assert "speedup" in result
@@ -579,7 +613,7 @@ class TestCircuitBreakerCoverage:
 
     def test_circuit_manual_reset(self):
         """CircuitBreaker.reset() manually closes the circuit."""
-        from src.circuit_breaker import CircuitBreaker, CircuitOpenError
+        from src.circuit_breaker import CircuitBreaker
 
         cb = CircuitBreaker(failure_threshold=1, recovery_timeout=60)
         with pytest.raises(ValueError):
@@ -591,7 +625,7 @@ class TestCircuitBreakerCoverage:
 
     def test_circuit_half_open_recovers(self):
         """CircuitBreaker transitions to half-open after recovery timeout."""
-        from src.circuit_breaker import CircuitBreaker, CircuitOpenError
+        from src.circuit_breaker import CircuitBreaker
 
         cb = CircuitBreaker(failure_threshold=1, recovery_timeout=0.05)
         with pytest.raises(ValueError):
@@ -599,6 +633,7 @@ class TestCircuitBreakerCoverage:
         assert cb.state == "open"
 
         import time
+
         time.sleep(0.06)  # Wait past recovery timeout
 
         # Should be half-open now — a success closes it
@@ -608,7 +643,7 @@ class TestCircuitBreakerCoverage:
 
     def test_circuit_half_open_failure_reopens(self):
         """CircuitBreaker re-opens if a half-open call fails."""
-        from src.circuit_breaker import CircuitBreaker, CircuitOpenError
+        from src.circuit_breaker import CircuitBreaker
 
         cb = CircuitBreaker(failure_threshold=1, recovery_timeout=0.05)
         with pytest.raises(ValueError):
@@ -616,6 +651,7 @@ class TestCircuitBreakerCoverage:
         assert cb.state == "open"
 
         import time
+
         time.sleep(0.06)  # Wait past recovery timeout
 
         # Half-open probe fails again → re-opens
@@ -751,8 +787,10 @@ class TestExportCoverage:
         model = MiniCNN(in_channels=3, num_classes=10, width=0.5)
         with tempfile.TemporaryDirectory() as tmpdir:
             path = export_to_onnx(
-                model, Path(tmpdir) / "dynamic.onnx",
-                opset_version=17, dynamic_batch=True,
+                model,
+                Path(tmpdir) / "dynamic.onnx",
+                opset_version=17,
+                dynamic_batch=True,
             )
             assert path.exists()
 
@@ -811,14 +849,14 @@ class TestTaskManagerRunCoverage:
 
     def test_get_tasks_provider(self):
         """get_tasks returns the module-level tasks dict."""
-        from src.task_manager import get_tasks, _tasks
+        from src.task_manager import _tasks, get_tasks
 
         tasks = get_tasks()
         assert tasks is _tasks
 
     def test_get_history_store_provider(self):
         """get_history_store returns the module-level history list."""
-        from src.task_manager import get_history_store, _history
+        from src.task_manager import _history, get_history_store
 
         store = get_history_store()
         assert store is _history
@@ -843,7 +881,7 @@ class TestTaskManagerRunCoverage:
 
     def test_tasks_provider_returns_dict(self):
         """get_tasks returns the module-level tasks dict."""
-        from src.task_manager import get_tasks, _tasks
+        from src.task_manager import _tasks, get_tasks
 
         tasks = get_tasks()
         assert tasks is _tasks
@@ -851,6 +889,7 @@ class TestTaskManagerRunCoverage:
     def test_cancel_with_subprocess(self):
         """Cancel kills subprocess if running."""
         import subprocess as _subprocess
+
         from src.task_manager import TrainingTask
 
         task = TrainingTask({"epochs": 1, "teacher": "resnet18"})
@@ -863,6 +902,7 @@ class TestTaskManagerRunCoverage:
     def test_subprocess_kill_on_timeout(self):
         """Cancel with subprocess that doesn't respond to terminate triggers kill."""
         import subprocess as _subprocess
+
         from src.task_manager import TrainingTask
 
         proc = _subprocess.Popen(
@@ -877,13 +917,23 @@ class TestTaskManagerRunCoverage:
     def test_training_task_run_dataset_error_cancelled(self):
         """_run handles DatasetError correctly when cancel is requested."""
         from unittest.mock import patch
-        from src.task_manager import TrainingTask
-        from src.pipeline import DatasetError
 
-        task = TrainingTask({"epochs": 1, "teacher": "resnet18", "batch_size": 64,
-                              "dataset": "CIFAR-10", "student": "MiniCNN",
-                              "temperature": 4.0, "alpha": 0.7, "compression_ratio": 0.05,
-                              "patience": 0})
+        from src.pipeline import DatasetError
+        from src.task_manager import TrainingTask
+
+        task = TrainingTask(
+            {
+                "epochs": 1,
+                "teacher": "resnet18",
+                "batch_size": 64,
+                "dataset": "CIFAR-10",
+                "student": "MiniCNN",
+                "temperature": 4.0,
+                "alpha": 0.7,
+                "compression_ratio": 0.05,
+                "patience": 0,
+            }
+        )
         task._cancel_requested = True  # Simulate cancellation during download
 
         with patch("src.task_manager.run_distillation_pipeline") as mock_pipeline:
@@ -895,13 +945,23 @@ class TestTaskManagerRunCoverage:
     def test_training_task_run_dataset_error_failed(self):
         """_run handles DatasetError as failure when no cancel."""
         from unittest.mock import patch
-        from src.task_manager import TrainingTask
-        from src.pipeline import DatasetError
 
-        task = TrainingTask({"epochs": 1, "teacher": "resnet18", "batch_size": 64,
-                              "dataset": "CIFAR-10", "student": "MiniCNN",
-                              "temperature": 4.0, "alpha": 0.7, "compression_ratio": 0.05,
-                              "patience": 0})
+        from src.pipeline import DatasetError
+        from src.task_manager import TrainingTask
+
+        task = TrainingTask(
+            {
+                "epochs": 1,
+                "teacher": "resnet18",
+                "batch_size": 64,
+                "dataset": "CIFAR-10",
+                "student": "MiniCNN",
+                "temperature": 4.0,
+                "alpha": 0.7,
+                "compression_ratio": 0.05,
+                "patience": 0,
+            }
+        )
 
         with patch("src.task_manager.run_distillation_pipeline") as mock_pipeline:
             mock_pipeline.side_effect = DatasetError("Download failed")
@@ -912,12 +972,22 @@ class TestTaskManagerRunCoverage:
     def test_training_task_run_generic_exception(self):
         """_run catches generic exceptions and marks task as failed."""
         from unittest.mock import patch
+
         from src.task_manager import TrainingTask
 
-        task = TrainingTask({"epochs": 1, "teacher": "resnet18", "batch_size": 64,
-                              "dataset": "CIFAR-10", "student": "MiniCNN",
-                              "temperature": 4.0, "alpha": 0.7, "compression_ratio": 0.05,
-                              "patience": 0})
+        task = TrainingTask(
+            {
+                "epochs": 1,
+                "teacher": "resnet18",
+                "batch_size": 64,
+                "dataset": "CIFAR-10",
+                "student": "MiniCNN",
+                "temperature": 4.0,
+                "alpha": 0.7,
+                "compression_ratio": 0.05,
+                "patience": 0,
+            }
+        )
 
         with patch("src.task_manager.run_distillation_pipeline") as mock_pipeline:
             mock_pipeline.side_effect = ValueError("Something unexpected")
@@ -1069,9 +1139,7 @@ class TestWebappCoverage:
         data = resp.json()
         task_id = data["task_id"]
 
-        resp = client_ws.post(
-            f"/api/export/{task_id}", json={"format": "invalid_format"}
-        )
+        resp = client_ws.post(f"/api/export/{task_id}", json={"format": "invalid_format"})
         assert resp.status_code == 400
 
     def test_train_invalid_dataset(self):
@@ -1161,7 +1229,12 @@ class TestWebappCoverage:
         # Compression ratio too high
         resp = client_ws.post(
             "/api/train",
-            json={"dataset": "CIFAR-10", "teacher": "resnet18", "epochs": 1, "compression_ratio": 5.0},
+            json={
+                "dataset": "CIFAR-10",
+                "teacher": "resnet18",
+                "epochs": 1,
+                "compression_ratio": 5.0,
+            },
         )
         assert resp.status_code == 400
 
@@ -1246,7 +1319,6 @@ class TestWebappCoverage:
 
     def test_download_with_temp_file(self):
         """Download endpoint serves existing files."""
-        import tempfile
 
         # Create a temp file in checkpoints dir
         os.makedirs("checkpoints", exist_ok=True)
@@ -1264,8 +1336,8 @@ class TestWebappCoverage:
 
     def test_exports_via_mocked_task(self):
         """Export endpoint works with a properly mocked task."""
-        from src.task_manager import _tasks
         from src.student import MiniCNN
+        from src.task_manager import _tasks
 
         model = MiniCNN(in_channels=3, num_classes=10, width=0.5)
 
@@ -1275,7 +1347,8 @@ class TestWebappCoverage:
             status = "completed"
             student = model
             config = {"dataset": "CIFAR-10", "student": "MiniCNN"}
-            _emit = lambda self, msg: None
+            def _emit(self, msg):
+                return None
 
         _tasks["fake_task_001"] = FakeTask()
         try:
@@ -1404,6 +1477,7 @@ class TestWebappCoverage:
         check inside the while loop body), and the _dirty=True data path.
         """
         import threading
+
         from src.task_manager import _tasks
 
         class RunningTask:
@@ -1426,6 +1500,7 @@ class TestWebappCoverage:
 
         def complete_task():
             import time as _time
+
             _time.sleep(0.3)
             t = _tasks.get("fake_running_sse")
             if t:
@@ -1501,8 +1576,8 @@ class TestWebappCoverage:
 
     def test_export_onnx_fallback_to_torchscript(self):
         """Export falls back to TorchScript when ONNX export fails."""
-        from src.task_manager import _tasks
         from src.student import MiniCNN
+        from src.task_manager import _tasks
 
         model = MiniCNN(in_channels=3, num_classes=10, width=0.5)
 
@@ -1511,7 +1586,8 @@ class TestWebappCoverage:
             status = "completed"
             student = model
             config = {"dataset": "CIFAR-10", "student": "MiniCNN"}
-            _emit = lambda self, msg: None
+            def _emit(self, msg):
+                return None
 
         _tasks["fake_fallback"] = FakeTask()
         try:
@@ -1534,8 +1610,8 @@ class TestWebappCoverage:
 
     def test_export_outer_exception(self):
         """Export returns 500 when both export formats fail."""
-        from src.task_manager import _tasks
         from src.student import MiniCNN
+        from src.task_manager import _tasks
 
         model = MiniCNN(in_channels=3, num_classes=10, width=0.5)
 
@@ -1544,7 +1620,8 @@ class TestWebappCoverage:
             status = "completed"
             student = model
             config = {"dataset": "CIFAR-10", "student": "MiniCNN"}
-            _emit = lambda self, msg: None
+            def _emit(self, msg):
+                return None
 
         _tasks["fake_outer_exc"] = FakeTask()
         try:
@@ -1599,19 +1676,26 @@ class TestWebappCoverage:
     def test_launch_function_basic(self):
         """launch() calls uvicorn.run with correct host/port."""
         import uvicorn
+
         from src.webapp import launch
 
         with patch.object(uvicorn, "run") as mock_run:
             launch(host="127.0.0.1", port=9999)
             mock_run.assert_called_once_with(
-                ANY, host="127.0.0.1", port=9999, log_level="warning",
-                ssl_certfile=None, ssl_keyfile=None,
+                ANY,
+                host="127.0.0.1",
+                port=9999,
+                log_level="warning",
+                ssl_certfile=None,
+                ssl_keyfile=None,
             )
 
     def test_launch_function_defaults(self):
         """launch() uses settings defaults when args are None."""
         import uvicorn
+
         from src.webapp import launch
+
         original_host = settings.host
         original_port = settings.port
         settings.host = "0.0.0.0"
@@ -1620,8 +1704,12 @@ class TestWebappCoverage:
             with patch.object(uvicorn, "run") as mock_run:
                 launch()
                 mock_run.assert_called_once_with(
-                    ANY, host="0.0.0.0", port=8888, log_level="warning",
-                    ssl_certfile=None, ssl_keyfile=None,
+                    ANY,
+                    host="0.0.0.0",
+                    port=8888,
+                    log_level="warning",
+                    ssl_certfile=None,
+                    ssl_keyfile=None,
                 )
         finally:
             settings.host = original_host
@@ -1630,7 +1718,9 @@ class TestWebappCoverage:
     def test_launch_api_only_mode(self):
         """launch() with api_only=True sets settings.api_only."""
         import uvicorn
+
         from src.webapp import launch
+
         original = settings.api_only
         settings.api_only = False
         try:
@@ -1643,7 +1733,9 @@ class TestWebappCoverage:
     def test_launch_with_ssl(self):
         """launch() passes ssl params and enables HSTS when cert/key are set."""
         import uvicorn
+
         from src.webapp import launch
+
         original_cert = settings.ssl_certfile
         original_key = settings.ssl_keyfile
         original_hsts = settings.hsts_max_age
@@ -1691,11 +1783,11 @@ class TestLogConfigCoverage:
 
     def test_setup_logger_duplicate_handlers(self):
         """setup_logger with existing handlers returns without adding more."""
+
         from src.log_config import setup_logger
-        import logging
 
         # First call creates logger
-        logger1 = setup_logger("test_dup_logger")
+        setup_logger("test_dup_logger")
         # Second call should reuse existing handlers
         logger2 = setup_logger("test_dup_logger")
         assert logger2 is not None
@@ -1725,11 +1817,9 @@ class TestStudentCoverage:
 
     def test_build_student_no_teacher_zero_ratio(self):
         """build_student without teacher and ratio=0 defaults to width=1.0."""
-        from src.student import build_student, MiniCNN
+        from src.student import MiniCNN, build_student
 
-        student = build_student(
-            teacher=None, student_type="MiniCNN", compression_ratio=0.0
-        )
+        student = build_student(teacher=None, student_type="MiniCNN", compression_ratio=0.0)
         base = MiniCNN(in_channels=3, num_classes=10, width=1.0)
         assert sum(p.numel() for p in student.parameters()) == sum(
             p.numel() for p in base.parameters()
@@ -1744,7 +1834,7 @@ class TestStudentCoverage:
 
     def test_build_student_compression_ratio_zero(self):
         """build_student with compression_ratio=0 uses width=1.0."""
-        from src.student import build_student, MiniCNN
+        from src.student import build_student
 
         teacher = nn.Sequential(nn.Linear(10, 10))
         student = build_student(
@@ -1776,6 +1866,7 @@ class TestAlertManagerCoverage:
     def setup_method(self) -> None:
         """Reset all module-level state before each test."""
         import src.alert_manager as am
+
         am._error_window.clear()
         am._request_window.clear()
         am._task_failures.clear()
@@ -1787,12 +1878,15 @@ class TestAlertManagerCoverage:
     def test_check_error_rate_empty_returns_none(self) -> None:
         """_check_error_rate returns None when no requests recorded."""
         import src.alert_manager as am
+
         assert am._check_error_rate() is None
 
     def test_check_error_rate_high_rate(self) -> None:
         """_check_error_rate returns alert when error rate > 5%."""
-        import src.alert_manager as am
         import time
+
+        import src.alert_manager as am
+
         now = time.time()
         for _ in range(10):
             am._request_window.append(now)
@@ -1803,8 +1897,10 @@ class TestAlertManagerCoverage:
 
     def test_check_error_rate_multiple_errors(self) -> None:
         """_check_error_rate returns alert when >=5 errors even at low rate."""
-        import src.alert_manager as am
         import time
+
+        import src.alert_manager as am
+
         now = time.time()
         for _ in range(5):
             am._request_window.append(now)
@@ -1817,8 +1913,10 @@ class TestAlertManagerCoverage:
 
     def test_check_error_rate_low_returns_none(self) -> None:
         """_check_error_rate returns None when both thresholds are below limits."""
-        import src.alert_manager as am
         import time
+
+        import src.alert_manager as am
+
         now = time.time()
         for _ in range(2):
             am._request_window.append(now)
@@ -1829,8 +1927,10 @@ class TestAlertManagerCoverage:
 
     def test_check_error_rate_purge_old_entries(self) -> None:
         """_check_error_rate purges entries older than 5 minutes."""
-        import src.alert_manager as am
         import time
+
+        import src.alert_manager as am
+
         old = time.time() - 400  # older than the 300 s window
         now = time.time()
         am._error_window.append(old)
@@ -1845,12 +1945,15 @@ class TestAlertManagerCoverage:
     def test_check_task_failures_empty(self) -> None:
         """_check_task_failures returns None when no failures exist."""
         import src.alert_manager as am
+
         assert am._check_task_failures() is None
 
     def test_check_task_failures_multiple(self) -> None:
         """_check_task_failures returns alert when >=3 failures within an hour."""
-        import src.alert_manager as am
         import time
+
+        import src.alert_manager as am
+
         now = time.time()
         for i in range(3):
             am._task_failures[f"task_{i}"] = now
@@ -1860,8 +1963,10 @@ class TestAlertManagerCoverage:
 
     def test_check_task_failures_below_threshold(self) -> None:
         """_check_task_failures returns None when <3 failures exist."""
-        import src.alert_manager as am
         import time
+
+        import src.alert_manager as am
+
         am._task_failures["single_task"] = time.time()
         assert am._check_task_failures() is None
 
@@ -1870,11 +1975,13 @@ class TestAlertManagerCoverage:
     def test_should_suppress_first_call(self) -> None:
         """_should_suppress returns False on first call (no suppression)."""
         import src.alert_manager as am
+
         assert not am._should_suppress("test_alert_1")
 
     def test_should_suppress_within_window(self) -> None:
         """_should_suppress returns True when called again within suppression window."""
         import src.alert_manager as am
+
         am._should_suppress("test_alert_2")  # first call → False
         assert am._should_suppress("test_alert_2")  # second call → suppressed
 
@@ -1884,6 +1991,7 @@ class TestAlertManagerCoverage:
         """_post_webhook returns early when no webhook URL configured."""
         import src.alert_manager as am
         from src.settings import settings as s
+
         original = s.alert_webhook_url
         s.alert_webhook_url = ""
         try:
@@ -1893,9 +2001,11 @@ class TestAlertManagerCoverage:
 
     def test_post_webhook_with_url(self) -> None:
         """_post_webhook posts JSON to the configured webhook URL."""
+        from unittest.mock import patch
+
         import src.alert_manager as am
         from src.settings import settings as s
-        from unittest.mock import patch
+
         original = s.alert_webhook_url
         s.alert_webhook_url = "https://hooks.example.com/hook"
         try:
@@ -1907,9 +2017,11 @@ class TestAlertManagerCoverage:
 
     def test_post_webhook_failure_logs_warning(self) -> None:
         """_post_webhook logs a warning when the webhook call fails."""
+        from unittest.mock import patch
+
         import src.alert_manager as am
         from src.settings import settings as s
-        from unittest.mock import patch
+
         original = s.alert_webhook_url
         s.alert_webhook_url = "https://hooks.example.com/hook"
         try:
@@ -1927,13 +2039,16 @@ class TestAlertManagerCoverage:
     def test_evaluate_once_clean_state(self) -> None:
         """_evaluate_once handles a clean state without crashing."""
         import src.alert_manager as am
+
         am._evaluate_once()
         assert am._consecutive_failures == 0
 
     def test_evaluate_once_with_errors(self) -> None:
         """_evaluate_once increments consecutive_failures when alerts fire."""
-        import src.alert_manager as am
         import time
+
+        import src.alert_manager as am
+
         now = time.time()
         for _ in range(10):
             am._request_window.append(now)
@@ -1944,14 +2059,17 @@ class TestAlertManagerCoverage:
     def test_evaluate_once_resets_on_clean(self) -> None:
         """_evaluate_once resets consecutive_failures to 0 when no alerts."""
         import src.alert_manager as am
+
         am._consecutive_failures = 10
         am._evaluate_once()  # empty windows → no alerts → reset
         assert am._consecutive_failures == 0
 
     def test_evaluate_once_consecutive_escalation(self) -> None:
         """_evaluate_once fires escalation alert after 5 consecutive alert cycles."""
-        import src.alert_manager as am
         import time
+
+        import src.alert_manager as am
+
         for _ in range(5):
             # Clear suppression so each cycle fires the error_rate alert
             am._last_alert.clear()
@@ -1976,6 +2094,7 @@ class TestTracingCoverage:
     def test_span_end_called_twice(self) -> None:
         """Span.end() is idempotent — second call does not raise."""
         from src.tracing import tracer
+
         span = tracer.start_span("test_span")
         span.end()
         span.end()  # must not raise
@@ -1984,6 +2103,7 @@ class TestTracingCoverage:
     def test_span_duration_zero_when_not_ended(self) -> None:
         """duration_ms returns 0 for an unended span."""
         from src.tracing import tracer
+
         span = tracer.start_span("test_span")
         assert span.duration_ms == 0.0
         span.end()
@@ -1991,6 +2111,7 @@ class TestTracingCoverage:
     def test_span_duration_positive_after_end(self) -> None:
         """duration_ms returns > 0 after the span is ended."""
         from src.tracing import tracer
+
         span = tracer.start_span("test_span")
         span.end()
         assert span.duration_ms > 0.0
@@ -1998,6 +2119,7 @@ class TestTracingCoverage:
     def test_span_to_traceparent(self) -> None:
         """to_traceparent returns a valid W3C traceparent string."""
         from src.tracing import Span
+
         span = Span("test", trace_id="abc123def4567890", span_id="xyz7890123456789")
         tp = span.to_traceparent()
         assert tp.startswith("00-")
@@ -2007,6 +2129,7 @@ class TestTracingCoverage:
     def test_span_repr(self) -> None:
         """Span repr includes the name and trace ID."""
         from src.tracing import Span
+
         span = Span("my_span", trace_id="aaaabbbbccccdddd", span_id="eeeeffff00001111")
         r = repr(span)
         assert "Span(" in r
@@ -2015,6 +2138,7 @@ class TestTracingCoverage:
     def test_span_context_manager(self) -> None:
         """Span used as context manager calls end() on exit."""
         from src.tracing import tracer
+
         with tracer.start_span("ctx_span") as span:
             assert span._end is None
         assert span._end is not None
@@ -2022,11 +2146,10 @@ class TestTracingCoverage:
     def test_tracer_span_from_traceparent(self) -> None:
         """span_from_traceparent parses a W3C traceparent header."""
         from src.tracing import tracer
+
         span = tracer.span_from_traceparent(
             "incoming", "00-abc123def4567890ffff0000aaaabbbb-xyz7890123456789-01"
         )
         assert span.name == "incoming"
         assert "abc123def4567890ffff0000aaaabbbb" in span.trace_id
         assert span.span_id is not None
-
-

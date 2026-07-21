@@ -231,9 +231,8 @@ class TestIOErrorRegression:
 
     def test_corrupted_pth_benchmark_does_not_crash(self):
         """cmd_benchmark with a corrupted .pth file should log and return."""
-        from unittest.mock import patch
-
         import argparse
+        from unittest.mock import patch
 
         args = argparse.Namespace(
             model="corrupted.pth",
@@ -263,7 +262,6 @@ class TestHistoryErrorRegression:
 
     def test_corrupted_history_logs_warning(self):
         """A corrupted JSON file should produce a log warning, not silence."""
-        import json
         import logging
 
         from src.task_manager import _load_history
@@ -299,12 +297,12 @@ class TestHistoryErrorRegression:
                     assert len(history) == 1
                     assert history[0]["id"] == "valid1"
                     # A warning should have been logged about the corrupted file
-                    assert any(
-                        "corrupt.json" in r.getMessage() for r in records
-                    ), "No warning logged about corrupted file"
-                    assert any(
-                        "corrupt" in r.getMessage().lower() for r in records
-                    ), "No corruption warning logged"
+                    assert any("corrupt.json" in r.getMessage() for r in records), (
+                        "No warning logged about corrupted file"
+                    )
+                    assert any("corrupt" in r.getMessage().lower() for r in records), (
+                        "No corruption warning logged"
+                    )
                 finally:
                     logger.removeHandler(handler)
             finally:

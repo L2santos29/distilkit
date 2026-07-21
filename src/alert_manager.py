@@ -12,22 +12,20 @@ import asyncio
 import json
 import time
 import urllib.request
-from collections import defaultdict
 from typing import Any
 
 from src.log_config import logger
 from src.settings import settings
 
-
 # ---------------------------------------------------------------------------
 # Sliding-window counters
 # ---------------------------------------------------------------------------
 
-_error_window: list[float] = []        # timestamps of 5xx responses
-_request_window: list[float] = []      # timestamps of all responses
+_error_window: list[float] = []  # timestamps of 5xx responses
+_request_window: list[float] = []  # timestamps of all responses
 _task_failures: dict[str, float] = {}  # task_id → timestamp of failure
-_last_alert: dict[str, float] = {}     # alert_name → last fired timestamp
-_consecutive_failures: int = 0         # consecutive alert cycles with issues
+_last_alert: dict[str, float] = {}  # alert_name → last fired timestamp
+_consecutive_failures: int = 0  # consecutive alert cycles with issues
 
 
 def record_response(status_code: int, duration: float) -> None:
@@ -72,10 +70,7 @@ def _check_error_rate() -> str | None:
             f"{len(_request_window)} total requests)"
         )
     if len(_error_window) >= 5:  # at least 5 errors even if rate is low
-        return (
-            f"Multiple 5xx errors: {len(_error_window)} in last 5 min "
-            f"(rate: {error_rate:.1%})"
-        )
+        return f"Multiple 5xx errors: {len(_error_window)} in last 5 min (rate: {error_rate:.1%})"
     return None
 
 
@@ -157,12 +152,14 @@ def _evaluate_once() -> None:
         _consecutive_failures = 0
 
     if _consecutive_failures >= 5 and not _should_suppress("escalation"):
-        alerts.append({
-            "name": "sustained_issues",
-            "message": f"Consecutive alert cycles: {_consecutive_failures}. "
-                       f"System may require manual intervention.",
-            "severity": "critical",
-        })
+        alerts.append(
+            {
+                "name": "sustained_issues",
+                "message": f"Consecutive alert cycles: {_consecutive_failures}. "
+                f"System may require manual intervention.",
+                "severity": "critical",
+            }
+        )
 
     # Fire all pending alerts
     for alert in alerts:
@@ -174,8 +171,10 @@ def _evaluate_once() -> None:
             logger.warning(log_msg)
 
         if settings.alert_webhook_url:
-            _post_webhook({
-                "text": f"*DistilKit Alert* `{alert['name']}`\n"
-                        f"Severity: {sev}\n{alert['message']}\n"
-                        f"Instance: {settings.host}:{settings.port}",
-            })
+            _post_webhook(
+                {
+                    "text": f"*DistilKit Alert* `{alert['name']}`\n"
+                    f"Severity: {sev}\n{alert['message']}\n"
+                    f"Instance: {settings.host}:{settings.port}",
+                }
+            )

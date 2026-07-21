@@ -21,9 +21,7 @@ class TrainRequest(BaseModel):
     temperature: float = Field(
         default=4.0, ge=0.1, le=100.0, description="Distillation temperature"
     )
-    alpha: float = Field(
-        default=0.7, ge=0.0, le=1.0, description="Distillation loss weight"
-    )
+    alpha: float = Field(default=0.7, ge=0.0, le=1.0, description="Distillation loss weight")
     patience: int = Field(default=0, ge=0, le=100, description="Early stopping patience")
     batch_size: int = Field(default=64, ge=1, le=4096, description="Training batch size")
 

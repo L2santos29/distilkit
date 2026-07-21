@@ -8,7 +8,6 @@ Verifies that components work together correctly:
 - checkpoint callbacks
 """
 
-import os
 import tempfile
 from pathlib import Path
 
@@ -19,7 +18,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from src.benchmarks import benchmark, compare_teacher_student
 from src.distiller import Distiller
 from src.onnx_export import export_to_onnx, export_to_torchscript
-from src.student import MiniCNN, MiniResNet, build_student
+from src.student import MiniCNN, build_student
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -98,9 +97,7 @@ def test_compare_teacher_student_structure():
     teacher = TinyTeacher(num_classes=10)
     student = MiniCNN(in_channels=3, num_classes=10, width=0.5)
 
-    comparison = compare_teacher_student(
-        teacher, student, input_shape=(1, 3, 32, 32), target="cpu"
-    )
+    comparison = compare_teacher_student(teacher, student, input_shape=(1, 3, 32, 32), target="cpu")
 
     # Top-level keys
     assert "teacher" in comparison
@@ -175,9 +172,7 @@ def test_distiller_on_epoch_end_callback():
     def track_epoch(epoch: int, total: int, _loss: float, acc: float | None) -> None:
         epochs_run.append((epoch, total, acc))
 
-    history = distiller.train(
-        train_loader, val_loader, epochs=2, on_epoch_end=track_epoch
-    )
+    history = distiller.train(train_loader, val_loader, epochs=2, on_epoch_end=track_epoch)
 
     assert len(epochs_run) == 2
     assert epochs_run[0] == (0, 2, history["val_acc"][0])
@@ -194,9 +189,7 @@ def test_distiller_on_batch_end_callback():
     distiller = Distiller(teacher, student, temperature=4.0, alpha=0.7)
     batch_count = 0
 
-    def track_batch(
-        _epoch: int, _total: int, _batch_idx: int, _total_b: int, _loss: float
-    ) -> None:
+    def track_batch(_epoch: int, _total: int, _batch_idx: int, _total_b: int, _loss: float) -> None:
         nonlocal batch_count
         batch_count += 1
 
@@ -241,9 +234,7 @@ def test_distiller_cancel_flag():
         call_count += 1
         return call_count >= 1  # Cancel after first epoch
 
-    history = distiller.train(
-        train_loader, val_loader, epochs=5, cancel_flag=cancel_after_epoch
-    )
+    history = distiller.train(train_loader, val_loader, epochs=5, cancel_flag=cancel_after_epoch)
 
     # Should have stopped after 1 epoch (or at least fewer than 5)
     assert len(history["train_loss"]) < 5
@@ -412,9 +403,7 @@ def test_distiller_alpha_zero_is_ce_only():
     """alpha=0 means purely hard-label (cross-entropy) loss."""
     teacher = TinyEdgeTeacher(num_classes=2)
     student = MiniCNN(in_channels=3, num_classes=2, width=0.25)
-    train_loader, val_loader = _synthetic_loaders(
-        batch_size=4, num_samples=8, num_classes=2
-    )
+    train_loader, val_loader = _synthetic_loaders(batch_size=4, num_samples=8, num_classes=2)
 
     distiller = Distiller(teacher, student, temperature=4.0, alpha=0.0)
     history = distiller.train(train_loader, val_loader, epochs=1)
@@ -427,9 +416,7 @@ def test_distiller_alpha_one_is_pure_distillation():
     """alpha=1.0 means purely distillation (ignores hard labels)."""
     teacher = TinyEdgeTeacher(num_classes=2)
     student = MiniCNN(in_channels=3, num_classes=2, width=0.25)
-    train_loader, val_loader = _synthetic_loaders(
-        batch_size=4, num_samples=8, num_classes=2
-    )
+    train_loader, val_loader = _synthetic_loaders(batch_size=4, num_samples=8, num_classes=2)
 
     distiller = Distiller(teacher, student, temperature=4.0, alpha=1.0)
     history = distiller.train(train_loader, val_loader, epochs=1)
@@ -441,9 +428,7 @@ def test_distiller_temperature_one():
     """temperature=1.0 is a valid edge (no softening)."""
     teacher = TinyEdgeTeacher(num_classes=2)
     student = MiniCNN(in_channels=3, num_classes=2, width=0.25)
-    train_loader, val_loader = _synthetic_loaders(
-        batch_size=4, num_samples=8, num_classes=2
-    )
+    train_loader, val_loader = _synthetic_loaders(batch_size=4, num_samples=8, num_classes=2)
 
     distiller = Distiller(teacher, student, temperature=1.0, alpha=0.7)
     history = distiller.train(train_loader, val_loader, epochs=1)
@@ -456,9 +441,7 @@ def test_distiller_single_batch():
     teacher = TinyEdgeTeacher(num_classes=2)
     student = MiniCNN(in_channels=3, num_classes=2, width=0.25)
     # 4 samples with batch_size=4 → exactly 1 batch
-    train_loader, val_loader = _synthetic_loaders(
-        batch_size=4, num_samples=4, num_classes=2
-    )
+    train_loader, val_loader = _synthetic_loaders(batch_size=4, num_samples=4, num_classes=2)
 
     distiller = Distiller(teacher, student, temperature=4.0, alpha=0.7)
     history = distiller.train(train_loader, val_loader, epochs=2)
@@ -470,9 +453,7 @@ def test_distiller_minimum_batch_size():
     """batch_size=1 is the minimum and should not crash."""
     teacher = TinyEdgeTeacher(num_classes=2)
     student = MiniCNN(in_channels=3, num_classes=2, width=0.25)
-    train_loader, val_loader = _synthetic_loaders(
-        batch_size=1, num_samples=4, num_classes=2
-    )
+    train_loader, val_loader = _synthetic_loaders(batch_size=1, num_samples=4, num_classes=2)
 
     distiller = Distiller(teacher, student, temperature=4.0, alpha=0.7)
     history = distiller.train(train_loader, val_loader, epochs=1)
@@ -484,9 +465,7 @@ def test_distiller_temperature_high():
     """High temperature (100.0) should not cause numerical issues."""
     teacher = TinyEdgeTeacher(num_classes=2)
     student = MiniCNN(in_channels=3, num_classes=2, width=0.25)
-    train_loader, val_loader = _synthetic_loaders(
-        batch_size=4, num_samples=8, num_classes=2
-    )
+    train_loader, val_loader = _synthetic_loaders(batch_size=4, num_samples=8, num_classes=2)
 
     distiller = Distiller(teacher, student, temperature=100.0, alpha=0.7)
     history = distiller.train(train_loader, val_loader, epochs=1)
@@ -527,9 +506,7 @@ def test_benchmark_tiny_input():
 def test_benchmark_large_batch():
     """benchmark with batch=64 does not crash."""
     model = nn.Sequential(nn.Flatten(), nn.Linear(32 * 32 * 3, 10))
-    results = benchmark(
-        model, input_shape=(64, 3, 32, 32), warmup_runs=2, benchmark_runs=5
-    )
+    results = benchmark(model, input_shape=(64, 3, 32, 32), warmup_runs=2, benchmark_runs=5)
 
     assert results["batch_size"] == 64
 
@@ -571,9 +548,7 @@ def test_export_to_torchscript_single_channel():
     """export_to_torchscript with a 1-channel model does not crash."""
     model = MiniCNN(in_channels=1, num_classes=1, width=0.25)
     with tempfile.TemporaryDirectory() as tmpdir:
-        path = export_to_torchscript(
-            model, Path(tmpdir) / "single.pt", input_shape=(1, 1, 32, 32)
-        )
+        path = export_to_torchscript(model, Path(tmpdir) / "single.pt", input_shape=(1, 1, 32, 32))
         assert path.exists()
 
         loaded = torch.jit.load(str(path))
@@ -625,9 +600,7 @@ def test_build_student_no_teacher():
     )
     assert student is not None
     base = MiniCNN(in_channels=3, num_classes=10, width=1.0)
-    assert sum(p.numel() for p in student.parameters()) == sum(
-        p.numel() for p in base.parameters()
-    )
+    assert sum(p.numel() for p in student.parameters()) == sum(p.numel() for p in base.parameters())
 
 
 def test_build_student_single_channel():
@@ -669,14 +642,10 @@ def test_distiller_cancel_at_start():
     """Cancelling before any epoch completes gracefully."""
     teacher = TinyEdgeTeacher(num_classes=2)
     student = MiniCNN(in_channels=3, num_classes=2, width=0.25)
-    train_loader, val_loader = _synthetic_loaders(
-        batch_size=4, num_samples=8, num_classes=2
-    )
+    train_loader, val_loader = _synthetic_loaders(batch_size=4, num_samples=8, num_classes=2)
 
     distiller = Distiller(teacher, student, temperature=4.0, alpha=0.7)
-    history = distiller.train(
-        train_loader, val_loader, epochs=5, cancel_flag=lambda: True
-    )
+    history = distiller.train(train_loader, val_loader, epochs=5, cancel_flag=lambda: True)
 
     # Should have 0 epochs — cancelled immediately
     assert len(history["train_loss"]) == 0
@@ -686,9 +655,7 @@ def test_distiller_patience_zero():
     """patience=0 runs all epochs without early stopping."""
     teacher = TinyEdgeTeacher(num_classes=2)
     student = MiniCNN(in_channels=3, num_classes=2, width=0.25)
-    train_loader, val_loader = _synthetic_loaders(
-        batch_size=4, num_samples=8, num_classes=2
-    )
+    train_loader, val_loader = _synthetic_loaders(batch_size=4, num_samples=8, num_classes=2)
 
     distiller = Distiller(teacher, student, temperature=4.0, alpha=0.7)
     history = distiller.train(train_loader, val_loader, epochs=3, patience=0)
@@ -715,6 +682,7 @@ def test_distiller_no_val_loader():
 def test_teacher_unsupported_name():
     """load_teacher with an unsupported name raises ValueError."""
     import pytest
+
     from src.teacher import load_teacher
 
     with pytest.raises(ValueError, match="Unknown model"):

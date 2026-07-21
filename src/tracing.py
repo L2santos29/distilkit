@@ -41,6 +41,7 @@ def current_span() -> "Span | None":
 # Span — lightweight implementation (used when OpenTelemetry is absent)
 # ---------------------------------------------------------------------------
 
+
 class Span:
     """A single tracing span with start/end time, attributes, and parent linkage.
 
@@ -103,11 +104,10 @@ class Span:
 # Tracer — context manager & span factory
 # ---------------------------------------------------------------------------
 
+
 def _new_id() -> str:
     """Generate a 16-byte hex trace/span ID (32 hex chars, W3C-compatible)."""
     return uuid.uuid4().hex
-
-
 
 
 class Tracer:

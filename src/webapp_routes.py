@@ -102,15 +102,47 @@ async def index():
                 "docs": "/docs",
                 "openapi": "/openapi.json",
                 "endpoints": [
-                    {"path": "/api/v1/config", "method": "GET", "description": "Available datasets, teachers, students"},
-                    {"path": "/api/v1/train", "method": "POST", "description": "Start a new distillation task"},
-                    {"path": "/api/v1/train/{task_id}", "method": "GET", "description": "Get task state"},
-                    {"path": "/api/v1/train/{task_id}/stream", "method": "GET", "description": "SSE progress stream"},
-                    {"path": "/api/v1/train/{task_id}/cancel", "method": "POST", "description": "Cancel a running task"},
-                    {"path": "/api/v1/export/{task_id}", "method": "POST", "description": "Export trained model"},
-                    {"path": "/api/v1/download/{filename}", "method": "GET", "description": "Download exported file"},
+                    {
+                        "path": "/api/v1/config",
+                        "method": "GET",
+                        "description": "Available datasets, teachers, students",
+                    },
+                    {
+                        "path": "/api/v1/train",
+                        "method": "POST",
+                        "description": "Start a new distillation task",
+                    },
+                    {
+                        "path": "/api/v1/train/{task_id}",
+                        "method": "GET",
+                        "description": "Get task state",
+                    },
+                    {
+                        "path": "/api/v1/train/{task_id}/stream",
+                        "method": "GET",
+                        "description": "SSE progress stream",
+                    },
+                    {
+                        "path": "/api/v1/train/{task_id}/cancel",
+                        "method": "POST",
+                        "description": "Cancel a running task",
+                    },
+                    {
+                        "path": "/api/v1/export/{task_id}",
+                        "method": "POST",
+                        "description": "Export trained model",
+                    },
+                    {
+                        "path": "/api/v1/download/{filename}",
+                        "method": "GET",
+                        "description": "Download exported file",
+                    },
                     {"path": "/api/v1/tasks", "method": "GET", "description": "List all tasks"},
-                    {"path": "/api/v1/history", "method": "GET", "description": "Completed training runs"},
+                    {
+                        "path": "/api/v1/history",
+                        "method": "GET",
+                        "description": "Completed training runs",
+                    },
                 ],
             }
         )
@@ -274,7 +306,9 @@ async def export_model(
             except (OSError, RuntimeError) as e:
                 self_emit = getattr(task, "_emit", None)
                 if self_emit:
-                    self_emit(f"\u26a0\ufe0f ONNX export failed ({e}), falling back to TorchScript.")
+                    self_emit(
+                        f"\u26a0\ufe0f ONNX export failed ({e}), falling back to TorchScript."
+                    )
                 fallback = filepath.replace(".onnx", ".pt")
                 export_to_torchscript(task.student, fallback)
                 filename = filename.replace(".onnx", ".pt")

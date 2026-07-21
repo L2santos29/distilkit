@@ -4,13 +4,13 @@ Constructs compact student models designed to be smaller, faster versions
 of their teacher counterparts for knowledge distillation.
 """
 
+import torch
+import torch.nn as nn
+
 # Base channel counts for each convolutional stage at width=1.0.
 # These are scaled by the ``width`` parameter to control model size.
 _CNN_BASE_CHANNELS: tuple[int, int, int, int] = (32, 64, 128, 256)
 _RESNET_BASE_CHANNELS: tuple[int, int] = (16, 32)
-
-import torch
-import torch.nn as nn
 
 
 class MiniCNN(nn.Module):

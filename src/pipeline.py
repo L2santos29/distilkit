@@ -136,13 +136,9 @@ def run_distillation_pipeline(
                     f"   ⚠️ Could not load pretrained weights: {e}. "
                     f"Falling back to random initialization."
                 )
-                teacher = load_teacher(
-                    teacher_name, num_classes=num_classes, pretrained=False
-                )
+                teacher = load_teacher(teacher_name, num_classes=num_classes, pretrained=False)
             else:
-                raise TeacherError(
-                    f"Failed to load teacher '{teacher_name}': {e}"
-                ) from e
+                raise TeacherError(f"Failed to load teacher '{teacher_name}': {e}") from e
 
         teacher.to(device).eval()
         teacher_params = sum(p.numel() for p in teacher.parameters())
@@ -252,9 +248,7 @@ def run_distillation_pipeline(
     if benchmark_target and benchmark_target != "none":
         with tracer.start_span("pipeline.benchmark") as span:
             span.set_attribute("target", benchmark_target)
-            comparison = compare_teacher_student(
-                teacher, student, target=benchmark_target
-            )
+            comparison = compare_teacher_student(teacher, student, target=benchmark_target)
             if comparison:
                 span.set_attribute("speedup", comparison.get("speedup", 0))
                 span.set_attribute("compression", comparison.get("compression", 0))
@@ -266,13 +260,8 @@ def run_distillation_pipeline(
                 f"   Student : {comparison['student']['mean_ms']:.2f} ms  "
                 f"({comparison['student']['parameters']:,} params)"
             )
-            _msg(
-                f"   Speedup : {comparison['speedup']}x"
-            )
-            _msg(
-                f"   Size    : {comparison['compression']:.2%} of teacher"
-            )
-
+            _msg(f"   Speedup : {comparison['speedup']}x")
+            _msg(f"   Size    : {comparison['compression']:.2%} of teacher")
 
     # ------------------------------------------------------------------
     # 9. Export
@@ -283,13 +272,9 @@ def run_distillation_pipeline(
             Path(export_output_dir).mkdir(parents=True, exist_ok=True)
             span.set_attribute("format", export_format)
             if export_format == "onnx":
-                exported_path = export_to_onnx(
-                    student, f"{export_output_dir}/student.onnx"
-                )
+                exported_path = export_to_onnx(student, f"{export_output_dir}/student.onnx")
             else:
-                exported_path = export_to_torchscript(
-                    student, f"{export_output_dir}/student.pt"
-                )
+                exported_path = export_to_torchscript(student, f"{export_output_dir}/student.pt")
             span.set_attribute("path", str(exported_path))
             _msg(f"   Exported to: {exported_path}")
 

@@ -17,7 +17,6 @@ DeviceTarget = Literal["cpu", "cuda", "npu"]
 MS_PER_SEC: int = 1000
 
 
-
 def benchmark(
     model: nn.Module,
     input_shape: tuple[int, int, int, int] = (1, 3, 32, 32),

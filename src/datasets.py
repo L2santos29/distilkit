@@ -87,9 +87,14 @@ DATASETS = {
 
 DATASET_CHOICES = list(DATASETS.keys())
 TEACHER_CHOICES = [
-    "resnet18", "resnet34", "resnet50", "resnet101",
-    "mobilenet_v2", "mobilenet_v3_large",
-    "efficientnet_b0", "efficientnet_b1",
+    "resnet18",
+    "resnet34",
+    "resnet50",
+    "resnet101",
+    "mobilenet_v2",
+    "mobilenet_v3_large",
+    "efficientnet_b0",
+    "efficientnet_b1",
 ]
 STUDENT_CHOICES = ["MiniCNN", "MiniResNet"]
 
@@ -135,27 +140,37 @@ def download_cifar10(
         else:
             logger.info("   Extracted directory incomplete, re-extracting...")
             import shutil
+
             shutil.rmtree(extracted_dir, ignore_errors=True)
     if os.path.exists(cifar_tgz) and os.path.getsize(cifar_tgz) == expected_size:
         logger.info("   Extracting previously downloaded file...")
         with tarfile.open(cifar_tgz, "r:gz") as tar:
-            tar.extractall(path=ds_root, filter='data')
+            tar.extractall(path=ds_root, filter="data")
         logger.info("   ✅ CIFAR-10 ready!")
         return True
     if os.path.exists(cifar_tgz):
-        logger.info(f"   Removing partial download ({os.path.getsize(cifar_tgz)/1e6:.0f} MB)...")
+        logger.info(f"   Removing partial download ({os.path.getsize(cifar_tgz) / 1e6:.0f} MB)...")
         os.remove(cifar_tgz)
 
     logger.info("⬇️ Downloading CIFAR-10 (170 MB)...")
 
     has_aria2c = (
-        subprocess.run(["which", "aria2c"], capture_output=True, timeout=SUBPROCESS_CHECK_TIMEOUT_SEC).returncode == 0
+        subprocess.run(
+            ["which", "aria2c"], capture_output=True, timeout=SUBPROCESS_CHECK_TIMEOUT_SEC
+        ).returncode
+        == 0
     )
     has_wget = (
-        subprocess.run(["which", "wget"], capture_output=True, timeout=SUBPROCESS_CHECK_TIMEOUT_SEC).returncode == 0
+        subprocess.run(
+            ["which", "wget"], capture_output=True, timeout=SUBPROCESS_CHECK_TIMEOUT_SEC
+        ).returncode
+        == 0
     )
     has_curl = (
-        subprocess.run(["which", "curl"], capture_output=True, timeout=SUBPROCESS_CHECK_TIMEOUT_SEC).returncode == 0
+        subprocess.run(
+            ["which", "curl"], capture_output=True, timeout=SUBPROCESS_CHECK_TIMEOUT_SEC
+        ).returncode
+        == 0
     )
 
     max_retries = MAX_DOWNLOAD_RETRIES
@@ -168,6 +183,7 @@ def download_cifar10(
 
         if attempt > 1:
             import time as _time
+
             delay = base_delay * (2 ** (attempt - 2))
             logger.info(f"   Retry {attempt}/{max_retries} in {delay}s...")
             _time.sleep(delay)
@@ -183,7 +199,9 @@ def download_cifar10(
 
             tools: list[list[str]] = []
             if has_aria2c:
-                tools.append(["aria2c", "-x", "4", "-s", "4", "-d", ds_root, "-o", info["filename"]])
+                tools.append(
+                    ["aria2c", "-x", "4", "-s", "4", "-d", ds_root, "-o", info["filename"]]
+                )
             if has_wget:
                 tools.append(["wget", "-O", cifar_tgz, "--show-progress"])
             if has_curl:
@@ -202,7 +220,9 @@ def download_cifar10(
                     proc.wait(timeout=SUBPROCESS_DOWNLOAD_TIMEOUT_SEC)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-                    logger.info(f"   {tool_name} timed out after {SUBPROCESS_DOWNLOAD_TIMEOUT_SEC}s")
+                    logger.info(
+                        f"   {tool_name} timed out after {SUBPROCESS_DOWNLOAD_TIMEOUT_SEC}s"
+                    )
                     continue
                 if subprocess_tracker is not None:
                     subprocess_tracker.clear()
@@ -214,6 +234,7 @@ def download_cifar10(
 
         if not downloaded_ok:
             import urllib.request
+
             logger.info("   Trying Python (fallback)...")
             for url in info["urls"]:
                 if cancel_flag():
@@ -233,7 +254,7 @@ def download_cifar10(
                             f.write(data)
                             downloaded += len(data)
                             if downloaded % (chunk * DOWNLOAD_PROGRESS_INTERVAL) == 0:
-                                logger.info(f"   {min(downloaded/total*100,100):.0f}%")
+                                logger.info(f"   {min(downloaded / total * 100, 100):.0f}%")
                     if os.path.getsize(cifar_tgz) == expected_size:
                         downloaded_ok = True
                         break
@@ -256,7 +277,7 @@ def download_cifar10(
 
     logger.info("   Extracting...")
     with tarfile.open(cifar_tgz, "r:gz") as tar:
-        tar.extractall(path=ds_root, filter='data')
+        tar.extractall(path=ds_root, filter="data")
     logger.info("✅ CIFAR-10 ready!")
     return True
 
@@ -270,7 +291,9 @@ def _check_torchvision_dataset(name: str, root: str) -> bool:
     """Check if a torchvision dataset's raw/processed files exist."""
     if os.path.isdir(os.path.join(root, "raw")) and os.listdir(os.path.join(root, "raw")):
         return True
-    if os.path.isdir(os.path.join(root, "processed")) and os.listdir(os.path.join(root, "processed")):
+    if os.path.isdir(os.path.join(root, "processed")) and os.listdir(
+        os.path.join(root, "processed")
+    ):
         return True
     return False
 
@@ -320,44 +343,62 @@ def get_dataset_loaders(
 
     # Transforms
     if input_size <= 32:
-        train_transform = transforms.Compose([
-            transforms.RandomCrop(input_size, padding=4 if input_size >= 28 else 2),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-        ])
+        train_transform = transforms.Compose(
+            [
+                transforms.RandomCrop(input_size, padding=4 if input_size >= 28 else 2),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ]
+        )
     else:
-        train_transform = transforms.Compose([
-            transforms.Resize(32),
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip(),
+        train_transform = transforms.Compose(
+            [
+                transforms.Resize(32),
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ]
+        )
+
+    val_transform = transforms.Compose(
+        [
             transforms.ToTensor(),
             transforms.Normalize(mean, std),
-        ])
-
-    val_transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean, std),
-    ])
+        ]
+    )
 
     # Load
     try:
         if dataset_name == "SVHN":
-            train_set = ds_class(root=ds_root, split="train", download=False, transform=train_transform)
+            train_set = ds_class(
+                root=ds_root, split="train", download=False, transform=train_transform
+            )
             val_set = ds_class(root=ds_root, split="test", download=False, transform=val_transform)
         else:
-            train_set = ds_class(root=ds_root, train=True, download=False, transform=train_transform)
+            train_set = ds_class(
+                root=ds_root, train=True, download=False, transform=train_transform
+            )
             val_set = ds_class(root=ds_root, train=False, download=False, transform=val_transform)
     except (OSError, RuntimeError) as e:
         # Safety fallback: if loading fails, try with download=True
         logger.info(f"   First load failed ({e}), retrying with download=True...")
         try:
             if dataset_name == "SVHN":
-                train_set = ds_class(root=ds_root, split="train", download=True, transform=train_transform)
-                val_set = ds_class(root=ds_root, split="test", download=True, transform=val_transform)
+                train_set = ds_class(
+                    root=ds_root, split="train", download=True, transform=train_transform
+                )
+                val_set = ds_class(
+                    root=ds_root, split="test", download=True, transform=val_transform
+                )
             else:
-                train_set = ds_class(root=ds_root, train=True, download=True, transform=train_transform)
-                val_set = ds_class(root=ds_root, train=False, download=True, transform=val_transform)
+                train_set = ds_class(
+                    root=ds_root, train=True, download=True, transform=train_transform
+                )
+                val_set = ds_class(
+                    root=ds_root, train=False, download=True, transform=val_transform
+                )
         except (OSError, RuntimeError) as e2:
             logger.info(f"❌ Failed to load dataset: {e2}")
             return None

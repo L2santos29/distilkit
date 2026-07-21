@@ -32,13 +32,9 @@ def _int_range(min_val: int, max_val: int | None, name: str) -> callable:
         except ValueError:
             raise argparse.ArgumentTypeError(f"{name} must be an integer, got {raw!r}")
         if val < min_val:
-            raise argparse.ArgumentTypeError(
-                f"{name} must be ≥ {min_val}, got {val}"
-            )
+            raise argparse.ArgumentTypeError(f"{name} must be ≥ {min_val}, got {val}")
         if max_val is not None and val > max_val:
-            raise argparse.ArgumentTypeError(
-                f"{name} must be ≤ {max_val}, got {val}"
-            )
+            raise argparse.ArgumentTypeError(f"{name} must be ≤ {max_val}, got {val}")
         return val
 
     return _validator
@@ -53,13 +49,9 @@ def _float_range(min_val: float, max_val: float | None, name: str) -> callable:
         except ValueError:
             raise argparse.ArgumentTypeError(f"{name} must be a number, got {raw!r}")
         if val < min_val:
-            raise argparse.ArgumentTypeError(
-                f"{name} must be ≥ {min_val}, got {val}"
-            )
+            raise argparse.ArgumentTypeError(f"{name} must be ≥ {min_val}, got {val}")
         if max_val is not None and val > max_val:
-            raise argparse.ArgumentTypeError(
-                f"{name} must be ≤ {max_val}, got {val}"
-            )
+            raise argparse.ArgumentTypeError(f"{name} must be ≤ {max_val}, got {val}")
         return val
 
     return _validator
@@ -316,7 +308,9 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
             input_name = session.get_inputs()[0].name
             input_shape = session.get_inputs()[0].shape
 
-            logger.info(f"   ONNX Runtime threads: intra={so.intra_op_num_threads}, inter={so.inter_op_num_threads}")
+            logger.info(
+                f"   ONNX Runtime threads: intra={so.intra_op_num_threads}, inter={so.inter_op_num_threads}"
+            )
 
             dummy = np.random.randn(*input_shape).astype(np.float32)
 

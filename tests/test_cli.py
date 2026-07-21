@@ -169,71 +169,77 @@ class TestCmdExportMocked:
         """cmd_export should call export_to_onnx when format='onnx'."""
         from unittest.mock import patch
 
-        with patch("src.cli.torch.load") as mock_load, patch(
-            "src.onnx_export.export_to_onnx"
-        ) as mock_onnx:
-            fake_state = {"state_dict": {"fc.weight": 1.0}}
-            mock_load.return_value = fake_state
+        with (
+            patch("src.cli.torch.load") as mock_load,
+            patch("src.onnx_export.export_to_onnx") as mock_onnx,
+        ):
+            with patch("src.cli.torch.load") as mock_load, patch(
+                "src.onnx_export.export_to_onnx"
+            ) as mock_onnx:
+                fake_state = {"state_dict": {"fc.weight": 1.0}}
+                mock_load.return_value = fake_state
 
-            with patch("src.student.MiniCNN") as mock_model:
-                instance = mock_model.return_value
+                with patch("src.student.MiniCNN"):
+                    args = argparse.Namespace(
+                        model="model.pth",
+                        format="onnx",
+                        output="out.onnx",
+                        command="export",
+                    )
+                    cmd_export(args)
 
-                args = argparse.Namespace(
-                    model="model.pth",
-                    format="onnx",
-                    output="out.onnx",
-                    command="export",
-                )
-                cmd_export(args)
-
-                mock_onnx.assert_called_once()
-                mock_load.assert_called_once_with("model.pth", map_location="cpu")
+                    mock_onnx.assert_called_once()
+                    mock_load.assert_called_once_with("model.pth", map_location="cpu")
 
     def test_export_calls_torchscript_when_format_is_torchscript(self):
         """cmd_export should call export_to_torchscript when format='torchscript'."""
         from unittest.mock import patch
 
-        with patch("src.cli.torch.load") as mock_load, patch(
-            "src.onnx_export.export_to_torchscript"
-        ) as mock_ts:
-            fake_state = {"state_dict": {"fc.weight": 1.0}}
-            mock_load.return_value = fake_state
+        with (
+            patch("src.cli.torch.load") as mock_load,
+            patch("src.onnx_export.export_to_torchscript") as mock_ts,
+        ):
+            with patch("src.cli.torch.load") as mock_load, patch(
+                "src.onnx_export.export_to_torchscript"
+            ) as mock_ts:
+                fake_state = {"state_dict": {"fc.weight": 1.0}}
+                mock_load.return_value = fake_state
 
-            with patch("src.student.MiniCNN") as mock_model:
-                instance = mock_model.return_value
+                with patch("src.student.MiniCNN"):
+                    args = argparse.Namespace(
+                        model="model.pth",
+                        format="torchscript",
+                        output="out.pt",
+                        command="export",
+                    )
+                    cmd_export(args)
 
-                args = argparse.Namespace(
-                    model="model.pth",
-                    format="torchscript",
-                    output="out.pt",
-                    command="export",
-                )
-                cmd_export(args)
-
-                mock_ts.assert_called_once()
+                    mock_ts.assert_called_once()
 
     def test_export_handles_raw_state_dict(self):
         """cmd_export should load a raw state dict (no 'state_dict' key)."""
         from unittest.mock import patch
 
-        with patch("src.cli.torch.load") as mock_load, patch(
-            "src.onnx_export.export_to_onnx"
-        ) as mock_onnx:
-            # State dict without "state_dict" wrapper key
-            mock_load.return_value = {"fc.weight": 1.0}
+        with (
+            patch("src.cli.torch.load") as mock_load,
+            patch("src.onnx_export.export_to_onnx") as mock_onnx,
+        ):
+            with patch("src.cli.torch.load") as mock_load, patch(
+                "src.onnx_export.export_to_onnx"
+            ) as mock_onnx:
+                # State dict without "state_dict" wrapper key
+                mock_load.return_value = {"fc.weight": 1.0}
 
-            with patch("src.student.MiniCNN") as mock_model:
-                instance = mock_model.return_value
+                with patch("src.student.MiniCNN"):
+                    args = argparse.Namespace(
+                        model="model.pth",
+                        format="onnx",
+                        output="out.onnx",
+                        command="export",
+                    )
+                    cmd_export(args)
 
-                args = argparse.Namespace(
-                    model="model.pth",
-                    format="onnx",
-                    output="out.onnx",
-                    command="export",
-                )
-                cmd_export(args)
-
-                mock_onnx.assert_called_once()
+                    mock_onnx.assert_called_once()
 
     def test_export_handles_load_failure(self):
         """cmd_export should handle torch.load failures without crashing."""
